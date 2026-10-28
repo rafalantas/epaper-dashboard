@@ -13,11 +13,16 @@ using fs::FS;
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
+#include <Preferences.h>
 #include <time.h>
 #include "ota_update.h"
 
 // ─── Konfiguracja — edytuj config.h ──────────────────────────────────────────
 #include "config.h"
+
+#ifndef SETTINGS_RESET_TOKEN
+#define SETTINGS_RESET_TOKEN ""
+#endif
 
 const char* NTP_SERVER   = "pool.ntp.org";
 const char* NTP_SERVER_2 = "time.google.com";
@@ -58,6 +63,17 @@ int       priceCount      = 0;
 int       currentPriceIdx = -1;
 long      g_utcOffsetSec  = 7200;
 
+struct DeviceSettings {
+  String wifiSsid;
+  String wifiPassword;
+  String apiHost;
+  uint32_t sleepSeconds;
+  int nightHourStart;
+  int nightHourEnd;
+  float pvMaxW;
+};
+DeviceSettings deviceSettings;
+
 EPaper epd;
 RTC_DATA_ATTR int   rtc_bootCount        = 0;
 RTC_DATA_ATTR float rtc_independence      = 0;
@@ -70,19 +86,65 @@ RTC_DATA_ATTR bool  rtc_nightUpdateChecked = false;
 void drawMsg(const String& l1, const String& l2 = "");
 bool fetchPrices(int currentLocalHour);
 
+void loadDeviceSettings() {
+  Preferences prefs;
+  if (!prefs.begin("epaper", false)) {
+    deviceSettings.wifiSsid = WIFI_SSID;
+    deviceSettings.wifiPassword = WIFI_PASSWORD;
+    deviceSettings.apiHost = API_HOST;
+    deviceSettings.sleepSeconds = SLEEP_SECONDS;
+    deviceSettings.nightHourStart = NIGHT_HOUR_START;
+    deviceSettings.nightHourEnd = NIGHT_HOUR_END;
+    deviceSettings.pvMaxW = PV_MAX_W;
+    return;
+  }
+
+  const String resetToken = SETTINGS_RESET_TOKEN;
+  const bool resetRequested = !resetToken.isEmpty() &&
+    prefs.getString("resetToken", "") != resetToken;
+  if (resetRequested || !prefs.getBool("configured", false)) {
+    prefs.putString("ssid", WIFI_SSID);
+    prefs.putString("wifiPass", WIFI_PASSWORD);
+    prefs.putString("apiHost", API_HOST);
+    prefs.putUInt("sleepSec", SLEEP_SECONDS);
+    prefs.putInt("nightStart", NIGHT_HOUR_START);
+    prefs.putInt("nightEnd", NIGHT_HOUR_END);
+    prefs.putFloat("pvMaxW", PV_MAX_W);
+    prefs.putBool("configured", true);
+    prefs.putString("resetToken", resetToken);
+  }
+
+  deviceSettings.wifiSsid = prefs.getString("ssid", WIFI_SSID);
+  deviceSettings.wifiPassword = prefs.getString("wifiPass", WIFI_PASSWORD);
+  deviceSettings.apiHost = prefs.getString("apiHost", API_HOST);
+  deviceSettings.sleepSeconds = prefs.getUInt("sleepSec", SLEEP_SECONDS);
+  deviceSettings.nightHourStart = prefs.getInt("nightStart", NIGHT_HOUR_START);
+  deviceSettings.nightHourEnd = prefs.getInt("nightEnd", NIGHT_HOUR_END);
+  deviceSettings.pvMaxW = prefs.getFloat("pvMaxW", PV_MAX_W);
+  prefs.end();
+
+  if (deviceSettings.apiHost.isEmpty()) deviceSettings.apiHost = API_HOST;
+  if (deviceSettings.sleepSeconds < 30) deviceSettings.sleepSeconds = SLEEP_SECONDS;
+  if (deviceSettings.nightHourStart < 0 || deviceSettings.nightHourStart > 23)
+    deviceSettings.nightHourStart = NIGHT_HOUR_START;
+  if (deviceSettings.nightHourEnd < 0 || deviceSettings.nightHourEnd > 23)
+    deviceSettings.nightHourEnd = NIGHT_HOUR_END;
+  if (deviceSettings.pvMaxW <= 0) deviceSettings.pvMaxW = PV_MAX_W;
+}
+
 // ─── Sleep calculator ─────────────────────────────────────────────────────────
 bool isNightHours(int localHour) {
-  return (NIGHT_HOUR_START > NIGHT_HOUR_END)
-    ? (localHour >= NIGHT_HOUR_START || localHour < NIGHT_HOUR_END)
-    : (localHour >= NIGHT_HOUR_START && localHour < NIGHT_HOUR_END);
+  return (deviceSettings.nightHourStart > deviceSettings.nightHourEnd)
+    ? (localHour >= deviceSettings.nightHourStart || localHour < deviceSettings.nightHourEnd)
+    : (localHour >= deviceSettings.nightHourStart && localHour < deviceSettings.nightHourEnd);
 }
 
 unsigned long calcSleepSeconds(int localHour, int localMin) {
   bool isNight = isNightHours(localHour);
-  if (!isNight) return SLEEP_SECONDS;
-  int hoursLeft = (localHour >= NIGHT_HOUR_START)
-    ? (24 - localHour + NIGHT_HOUR_END)
-    : (NIGHT_HOUR_END - localHour);
+  if (!isNight) return deviceSettings.sleepSeconds;
+  int hoursLeft = (localHour >= deviceSettings.nightHourStart)
+    ? (24 - localHour + deviceSettings.nightHourEnd)
+    : (deviceSettings.nightHourEnd - localHour);
   unsigned long secs = (unsigned long)hoursLeft * 3600UL - (unsigned long)localMin * 60UL;
   return max(secs, 60UL);
 }
@@ -253,14 +315,14 @@ void drawPriceMeter(int x, int y, int w, float price, float minP, float maxP) {
 bool connectWiFi() {
   WiFi.mode(WIFI_STA);
   WiFi.setHostname("sloneczny-panel");
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  WiFi.begin(deviceSettings.wifiSsid.c_str(), deviceSettings.wifiPassword.c_str());
   // Pierwsza proba - 15 sekund
   for (int i = 0; i < 30 && WiFi.status() != WL_CONNECTED; i++) delay(500);
   if (WiFi.status() == WL_CONNECTED) return true;
   // Druga proba - disconnect i reconnect
   WiFi.disconnect();
   delay(500);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  WiFi.begin(deviceSettings.wifiSsid.c_str(), deviceSettings.wifiPassword.c_str());
   for (int i = 0; i < 20 && WiFi.status() != WL_CONNECTED; i++) delay(500);
   return WiFi.status() == WL_CONNECTED;
 }
@@ -278,7 +340,7 @@ String httpGet(const String& url) {
 
 // ─── Fetch /api/state ─────────────────────────────────────────────────────────
 bool fetchState() {
-  String body = httpGet(String(API_HOST) + "/api/state");
+  String body = httpGet(deviceSettings.apiHost + "/api/state");
   if (body.isEmpty()) return false;
   StaticJsonDocument<2048> doc;
   if (deserializeJson(doc, body) != DeserializationError::Ok) return false;
@@ -304,7 +366,7 @@ bool fetchEfficiency() {
 
   // 1. /api/energy?period=day — efficiency (83.8%) i totalKwh (produkcja dzienna)
   {
-    String body = httpGet(String(API_HOST) + "/api/energy?period=day");
+    String body = httpGet(deviceSettings.apiHost + "/api/energy?period=day");
     if (!body.isEmpty()) {
       DynamicJsonDocument doc(2048);
       if (deserializeJson(doc, body) == DeserializationError::Ok) {
@@ -320,7 +382,7 @@ bool fetchEfficiency() {
   // 2. /api/efficiency — forecastKwh (prognoza)
   {
     HTTPClient http;
-    http.begin(String(API_HOST) + "/api/efficiency");
+    http.begin(deviceSettings.apiHost + "/api/efficiency");
     http.setTimeout(25000);
     String body = "";
     if (http.GET() == HTTP_CODE_OK) body = http.getString();
@@ -340,14 +402,14 @@ bool fetchEfficiency() {
 
 // ─── Fetch /api/prices ────────────────────────────────────────────────────────
 bool fetchPrices(int currentLocalHour) {
-  String body = httpGet(String(API_HOST) + "/api/prices");
+  String body = httpGet(deviceSettings.apiHost + "/api/prices");
   // Jedna ponowna proba jesli pusta odpowiedz
   if (body.isEmpty()) {
     delay(2000);
-    body = httpGet(String(API_HOST) + "/api/prices");
+    body = httpGet(deviceSettings.apiHost + "/api/prices");
   }
   if (body.isEmpty()) {
-    drawMsg("prices: brak odpowiedzi", String(API_HOST));
+    drawMsg("prices: brak odpowiedzi", deviceSettings.apiHost);
     delay(3000); return false;
   }
   DynamicJsonDocument doc(10240);
@@ -458,7 +520,7 @@ void drawScreen() {
   epd.setTextSize(1); epd.setCursor(38, 24); epd.print("PV");
   epd.setTextSize(3); epd.setCursor(18, 48); epd.print(String((int)state.pvTotal));
   epd.setTextSize(2); epd.setCursor(18 + String((int)state.pvTotal).length()*18+2, 55); epd.print("W");
-  int pvPct = (int)(state.pvTotal / PV_MAX_W * 100.0f);
+  int pvPct = (int)(state.pvTotal / deviceSettings.pvMaxW * 100.0f);
   pvPct = min(pvPct, 100);
   // Linia 1: dziś kWh + efektywność LUB produkcja %
   epd.setTextSize(1); epd.setCursor(18, 90);
@@ -545,13 +607,13 @@ void drawScreen() {
     epd.setTextSize(3); epd.setCursor(612, 48); epd.print(val);
     epd.setTextSize(2); epd.setCursor(612+val.length()*18+2, 55); epd.print("W");
     epd.setTextSize(1); epd.setCursor(612, 90); epd.print("eksport");
-    drawBar(612, 104, 164, 8, min(state.feedPower / PV_MAX_W * 100.0f, 100.0f));
+    drawBar(612, 104, 164, 8, min(state.feedPower / deviceSettings.pvMaxW * 100.0f, 100.0f));
   } else if (state.fromGrid > 20) {
     String val = String((int)state.fromGrid);
     epd.setTextSize(3); epd.setCursor(612, 48); epd.print(val);
     epd.setTextSize(2); epd.setCursor(612+val.length()*18+2, 55); epd.print("W");
     epd.setTextSize(1); epd.setCursor(612, 90); epd.print("pobor");
-    drawBar(612, 104, 164, 8, min(state.fromGrid / PV_MAX_W * 100.0f, 100.0f));
+    drawBar(612, 104, 164, 8, min(state.fromGrid / deviceSettings.pvMaxW * 100.0f, 100.0f));
   } else {
     epd.setTextSize(3); epd.setCursor(612, 48); epd.print("~0");
     epd.setTextSize(2); epd.setCursor(648, 55); epd.print("W");
@@ -813,6 +875,7 @@ void setup() {
   delay(3000);  // okno serwisowe na Upload
 
   epd.begin();
+  loadDeviceSettings();
 
   // Zaladuj efficiency z RTC cache
   state.independence = rtc_independence;
@@ -822,7 +885,7 @@ void setup() {
   if (!connectWiFi()) {
     drawMsg("Brak WiFi!", "Spi 5 min...");
     WiFi.disconnect(true); WiFi.mode(WIFI_OFF);
-    esp_deep_sleep((uint64_t)SLEEP_SECONDS * 1000000ULL);
+    esp_deep_sleep((uint64_t)deviceSettings.sleepSeconds * 1000000ULL);
     return;
   }
 
@@ -836,7 +899,7 @@ void setup() {
     }
     if (tmp.tm_year <= 100) {
       WiFi.disconnect(true); WiFi.mode(WIFI_OFF);
-      esp_deep_sleep((uint64_t)SLEEP_SECONDS * 1000000ULL);
+      esp_deep_sleep((uint64_t)deviceSettings.sleepSeconds * 1000000ULL);
       return;
     }
   }
@@ -865,7 +928,7 @@ void setup() {
     epd.setTextColor(TFT_BLACK, TFT_WHITE);
     epd.setTextSize(2); epd.setCursor(20, 20); epd.print("Dobranoc :)");
     epd.setTextSize(1); epd.setCursor(20, 60);
-    epd.print("Nastepne odswiezenie o " + String(NIGHT_HOUR_END) + ":00");
+    epd.print("Nastepne odswiezenie o " + String(deviceSettings.nightHourEnd) + ":00");
     char tb[20]; strftime(tb, sizeof(tb), "%H:%M  %d.%m.%Y", &nowTm);
     epd.setCursor(20, 80); epd.print(tb);
     epd.update();

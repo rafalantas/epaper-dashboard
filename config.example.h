@@ -19,4 +19,7 @@
 // Peak PV power in watts, used to scale production bars
 #define PV_MAX_W       1000.0f
 
+// Set a new unique value and upload once over USB to replace saved settings.
+#define SETTINGS_RESET_TOKEN ""
+
 #endif

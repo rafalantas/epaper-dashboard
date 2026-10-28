@@ -62,6 +62,8 @@ Tag a release as `vMAJOR.MINOR.PATCH` (for example, `v1.2.3`) and push the tag t
 
 **One-time setup:** the current firmware has no OTA updater. Connect the XIAO to USB and upload this version once, with `partitions.csv` in the sketch folder so the board gets the two OTA firmware slots. Later releases can install automatically. The partition table reserves two 1.875 MiB slots; the Arduino IDE build must use the same board and local partition file as the release build.
 
+For this first USB upload, use your private `config.h`. The device saves Wi-Fi, API, sleep, quiet-hour and PV settings in NVS, so generic release builds with placeholder settings do not replace them during OTA. To change saved values later, set `SETTINGS_RESET_TOKEN` in `config.h` to a new unique string and upload once over USB; that causes the current config values to be saved again.
+
 ## Settings
 
 The local configuration file controls Wi-Fi and API connection details, the normal sleep interval, quiet hours and the peak PV power used to scale display bars. `config.example.h` documents the available settings and safe example values.
