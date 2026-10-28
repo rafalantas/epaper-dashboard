@@ -1,0 +1,11 @@
+# Local configuration can contain Wi-Fi and OTA credentials.
+/config.h
+
+# Arduino IDE / build output
+/build/
+/build-*/
+*.hex
+*.elf
+*.bin
+*.map
+.DS_Store
