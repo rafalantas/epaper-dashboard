@@ -3,25 +3,26 @@
 // Deep sleep co 5 minut, cisza nocna 23:00-06:00
 // Biblioteki: Seeed GFX (ZIP), ArduinoJson, ElegantOTA (opcjonalne)
 // ─────────────────────────────────────────────────────────────────────────────
- 
+
 #include "driver.h"
 #include <TFT_eSPI.h>
- 
+
 namespace fs { class FS; }
 using fs::FS;
- 
+
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include <time.h>
- 
+#include "ota_update.h"
+
 // ─── Konfiguracja — edytuj config.h ──────────────────────────────────────────
 #include "config.h"
- 
+
 const char* NTP_SERVER   = "pool.ntp.org";
 const char* NTP_SERVER_2 = "time.google.com";
 const char* TZ_INFO      = "CET-1CEST,M3.5.0,M10.5.0/3";
- 
+
 // ─── Struktury ────────────────────────────────────────────────────────────────
 struct State {
   float pvTotal     = 0;
@@ -42,37 +43,42 @@ struct State {
   int   dsgRemTime  = 0;
   bool  connected   = false;
 };
- 
+
 struct PriceSlot {
   int   hour       = 0;
   float price      = 0;
   bool  isCheap    = false;
   bool  isExpensive= false;
 };
- 
+
 // ─── Globalne ─────────────────────────────────────────────────────────────────
 State     state;
 PriceSlot prices[48];
 int       priceCount      = 0;
 int       currentPriceIdx = -1;
 long      g_utcOffsetSec  = 7200;
- 
+
 EPaper epd;
 RTC_DATA_ATTR int   rtc_bootCount        = 0;
 RTC_DATA_ATTR float rtc_independence      = 0;
 RTC_DATA_ATTR float rtc_forecastKwh       = 0;
 RTC_DATA_ATTR float rtc_solarKwh          = 0;
 RTC_DATA_ATTR int   rtc_effFetchHour      = -1;
- 
+RTC_DATA_ATTR bool  rtc_nightUpdateChecked = false;
+
 // ─── Forward declarations ──────────────────────────────────────────────────────
 void drawMsg(const String& l1, const String& l2 = "");
 bool fetchPrices(int currentLocalHour);
- 
+
 // ─── Sleep calculator ─────────────────────────────────────────────────────────
-unsigned long calcSleepSeconds(int localHour, int localMin) {
-  bool isNight = (NIGHT_HOUR_START > NIGHT_HOUR_END)
+bool isNightHours(int localHour) {
+  return (NIGHT_HOUR_START > NIGHT_HOUR_END)
     ? (localHour >= NIGHT_HOUR_START || localHour < NIGHT_HOUR_END)
     : (localHour >= NIGHT_HOUR_START && localHour < NIGHT_HOUR_END);
+}
+
+unsigned long calcSleepSeconds(int localHour, int localMin) {
+  bool isNight = isNightHours(localHour);
   if (!isNight) return SLEEP_SECONDS;
   int hoursLeft = (localHour >= NIGHT_HOUR_START)
     ? (24 - localHour + NIGHT_HOUR_END)
@@ -80,7 +86,7 @@ unsigned long calcSleepSeconds(int localHour, int localMin) {
   unsigned long secs = (unsigned long)hoursLeft * 3600UL - (unsigned long)localMin * 60UL;
   return max(secs, 60UL);
 }
- 
+
 // ─── UTC offset ───────────────────────────────────────────────────────────────
 // Pobieramy offset przez porownanie tego samego time_t przez localtime i gmtime
 // Uzywamy minut i sekund zeby byc precyzyjnym (DST moze miec pol-godzinne offsety)
@@ -101,14 +107,14 @@ void calcUtcOffset() {
     local_tm.tm_hour, local_tm.tm_min,
     utc_tm.tm_hour, utc_tm.tm_min);
 }
- 
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 void drawCard(int x, int y, int w, int h) {
   epd.fillRect(x, y, w, h, TFT_WHITE);
   epd.drawRect(x, y, w, h, TFT_BLACK);
   epd.drawRect(x+1, y+1, w-2, h-2, TFT_BLACK);
 }
- 
+
 void drawBar(int x, int y, int w, int h, float pct) {
   pct = max(0.0f, min(100.0f, pct));
   epd.fillRect(x, y, w, h, TFT_WHITE);
@@ -116,7 +122,7 @@ void drawBar(int x, int y, int w, int h, float pct) {
   int fill = (int)(w * pct / 100.0f);
   if (fill > 2) epd.fillRect(x+1, y+1, fill-2, h-2, TFT_BLACK);
 }
- 
+
 void drawBadge(int x, int y, int w, int h, const char* text, bool filled) {
   if (filled) {
     epd.fillRect(x, y, w, h, TFT_BLACK);
@@ -135,7 +141,7 @@ void drawBadge(int x, int y, int w, int h, const char* text, bool filled) {
   epd.print(text);
   epd.setTextColor(TFT_BLACK, TFT_WHITE);
 }
- 
+
 // ─── Ikony bitmap 16x16 ───────────────────────────────────────────────────────
 const uint8_t ICON_SUN[] = {
   0b00010000,0b00001000,
@@ -209,9 +215,9 @@ const uint8_t ICON_GRID[] = {
   0b00000000,0b00000000,
   0b00000000,0b00000000,
 };
- 
- 
- 
+
+
+
 void drawIcon(int x, int y, const uint8_t* icon) {
   for (int row = 0; row < 16; row++) {
     uint16_t bits = ((uint16_t)icon[row*2] << 8) | icon[row*2+1];
@@ -220,7 +226,7 @@ void drawIcon(int x, int y, const uint8_t* icon) {
     }
   }
 }
- 
+
 void drawPriceTrend(int x, int y) {
   if (currentPriceIdx <= 0 || currentPriceIdx >= priceCount) return;
   float diff = prices[currentPriceIdx].price - prices[currentPriceIdx-1].price;
@@ -234,7 +240,7 @@ void drawPriceTrend(int x, int y) {
     epd.drawLine(x+5, y+8, x+10, y, TFT_BLACK);
   }
 }
- 
+
 void drawPriceMeter(int x, int y, int w, float price, float minP, float maxP) {
   epd.drawRect(x, y, w, 7, TFT_BLACK);
   float range = max(maxP - minP, 0.01f);
@@ -242,7 +248,7 @@ void drawPriceMeter(int x, int y, int w, float price, float minP, float maxP) {
   fill = max(0, min(fill, w-2));
   epd.fillRect(x+1, y+1, fill, 5, TFT_BLACK);
 }
- 
+
 // ─── WiFi ─────────────────────────────────────────────────────────────────────
 bool connectWiFi() {
   WiFi.mode(WIFI_STA);
@@ -258,7 +264,7 @@ bool connectWiFi() {
   for (int i = 0; i < 20 && WiFi.status() != WL_CONNECTED; i++) delay(500);
   return WiFi.status() == WL_CONNECTED;
 }
- 
+
 // ─── HTTP GET ─────────────────────────────────────────────────────────────────
 String httpGet(const String& url) {
   HTTPClient http;
@@ -269,7 +275,7 @@ String httpGet(const String& url) {
   http.end();
   return body;
 }
- 
+
 // ─── Fetch /api/state ─────────────────────────────────────────────────────────
 bool fetchState() {
   String body = httpGet(String(API_HOST) + "/api/state");
@@ -291,11 +297,11 @@ bool fetchState() {
   state.connected   = doc["connected"]  | false;
   return true;
 }
- 
+
 // ─── Fetch /api/efficiency ───────────────────────────────────────────────────
 bool fetchEfficiency() {
   bool ok = false;
- 
+
   // 1. /api/energy?period=day — efficiency (83.8%) i totalKwh (produkcja dzienna)
   {
     String body = httpGet(String(API_HOST) + "/api/energy?period=day");
@@ -310,7 +316,7 @@ bool fetchEfficiency() {
       }
     }
   }
- 
+
   // 2. /api/efficiency — forecastKwh (prognoza)
   {
     HTTPClient http;
@@ -328,10 +334,10 @@ bool fetchEfficiency() {
       }
     }
   }
- 
+
   return ok;
 }
- 
+
 // ─── Fetch /api/prices ────────────────────────────────────────────────────────
 bool fetchPrices(int currentLocalHour) {
   String body = httpGet(String(API_HOST) + "/api/prices");
@@ -350,19 +356,19 @@ bool fetchPrices(int currentLocalHour) {
   }
   JsonArray arr = doc["prices"].as<JsonArray>();
   if (arr.isNull()) { drawMsg("prices: brak tablicy"); delay(3000); return false; }
- 
+
   priceCount = 0; currentPriceIdx = -1;
- 
+
   for (JsonObject slot : arr) {
     if (priceCount >= 48) break;
     if (slot["price"].isNull()) continue;
     float price = slot["price"] | 0.0f;
     if (price <= 0) continue;
- 
+
     prices[priceCount].price       = price;
     prices[priceCount].isCheap     = slot["isCheap"]     | false;
     prices[priceCount].isExpensive = slot["isExpensive"] | false;
- 
+
     String startStr = slot["start"].as<String>();
     String endStr   = slot["end"].as<String>();
     int Y=0,Mo=0,D=0,h=0,m=0,s=0;
@@ -370,7 +376,7 @@ bool fetchPrices(int currentLocalHour) {
     int localHour = (h + (int)(g_utcOffsetSec / 3600)) % 24;
     if (localHour < 0) localHour += 24;
     prices[priceCount].hour = localHour;
- 
+
     // Porownaj godziny bezposrednio - bez mktime, bez time_t
     // localHour juz jest przeliczony na czas lokalny (+2h)
     // Aktualny czas lokalny mamy z NTP
@@ -379,7 +385,7 @@ bool fetchPrices(int currentLocalHour) {
     if (localHour == currentLocalHour && currentPriceIdx < 0) {
       currentPriceIdx = priceCount;
     }
- 
+
     priceCount++;
   }
   Serial.printf("Prices: %d slots, idx=%d, offset=%ldh\n",
@@ -395,7 +401,7 @@ bool fetchPrices(int currentLocalHour) {
   }
   return priceCount > 0;
 }
- 
+
 // ─── Tanie godziny ────────────────────────────────────────────────────────────
 int minutesToNextCheap() {
   if (currentPriceIdx < 0) return -1;
@@ -404,7 +410,7 @@ int minutesToNextCheap() {
     if (prices[i].isCheap) return (i - currentPriceIdx) * 60;
   return -1;
 }
- 
+
 // ─── Rekomendacja ─────────────────────────────────────────────────────────────
 String getRecommendation(String& desc) {
   if (currentPriceIdx < 0) { desc = "Brak danych cenowych"; return "?"; }
@@ -417,7 +423,7 @@ String getRecommendation(String& desc) {
   float load      = state.sysLoad;
   bool  pvSurplus = (pv > load + 200);
   bool  pvGood    = (pv > 1000);
- 
+
   if (cheap && pvGood)       { desc = "Tania cena + duze PV";      return "UZYWAJ TERAZ"; }
   if (cheap && soc > 50)     { desc = "Tania cena + bateria OK";   return "UZYWAJ TERAZ"; }
   if (cheap)                 { desc = "Tania cena";                return "UZYWAJ TERAZ"; }
@@ -430,12 +436,12 @@ String getRecommendation(String& desc) {
   if (pvSurplus)             { desc = "Nadwyzka PV";               return "UZYWAJ TERAZ"; }
   desc = "Cena normalna, PV slabie"; return "OK";
 }
- 
+
 // ─── Rysowanie ────────────────────────────────────────────────────────────────
 void drawScreen() {
   epd.fillScreen(TFT_WHITE);
   epd.setTextColor(TFT_BLACK, TFT_WHITE);
- 
+
   float allMinP = 9999, allMaxP = -9999;
   for (int i = 0; i < min(priceCount, 24); i++) {
     if (prices[i].price > 0) {
@@ -443,9 +449,9 @@ void drawScreen() {
       allMaxP = max(allMaxP, prices[i].price);
     }
   }
- 
+
   // ── 4 karty górne (y:10-134) ──────────────────────────────────────────────
- 
+
   // PV
   drawCard(10, 10, 190, 125);
   drawIcon(18, 18, ICON_SUN);
@@ -473,7 +479,7 @@ void drawScreen() {
   // Pasek efektywnosci (lub mocy szczytowej jako fallback)
   float barVal = state.independence > 0 ? state.independence : (float)pvPct;
   drawBar(18, 104, 168, 8, barVal);
- 
+
   // Bateria
   drawCard(208, 10, 190, 125);
   drawIcon(216, 18, ICON_BAT);
@@ -489,7 +495,7 @@ void drawScreen() {
   int arrowTop = 42;   // gora cyfr SOC
   int arrowBot = 64;   // dol cyfr SOC
   int arrowMid = (arrowTop + arrowBot) / 2;
- 
+
   if (state.chgDsgState == 2) {
     // Strzalka w gore (ladowanie)
     epd.fillTriangle(arrowX, arrowBot, arrowX+14, arrowBot, arrowX+7, arrowTop, TFT_BLACK);
@@ -513,7 +519,7 @@ void drawScreen() {
     epd.setTextSize(1); epd.setCursor(216, 90); epd.print("idle");
   }
   drawBar(216, 104, 168, 8, state.soc);
- 
+
   // Dom
   drawCard(406, 10, 190, 125);
   drawIcon(414, 18, ICON_HOME);
@@ -529,7 +535,7 @@ void drawScreen() {
   int pvCover = (state.sysLoad > 0) ? (int)(state.loadFromPv / state.sysLoad * 100.0f) : 0;
   pvCover = min(pvCover, 100);
   drawBar(414, 104, 168, 8, (float)pvCover);
- 
+
   // Grid
   drawCard(604, 10, 186, 125);
   drawIcon(612, 18, ICON_GRID);
@@ -552,16 +558,16 @@ void drawScreen() {
     epd.setTextSize(1); epd.setCursor(612, 90); epd.print("bilans zerowy");
     drawBar(612, 104, 164, 8, 0);
   }
- 
+
   // Separator
   epd.fillRect(10, 147, 780, 2, TFT_BLACK);
- 
+
   // ── Cena teraz (y:157-286) ────────────────────────────────────────────────
   drawCard(10, 157, 185, 130);
   epd.setTextSize(1); epd.setCursor(24, 170); epd.print("Cena teraz");
   drawPriceTrend(150, 170);
   if (currentPriceIdx >= 0) {
- 
+
     char buf[10]; dtostrf(prices[currentPriceIdx].price, 4, 2, buf);
     epd.setTextSize(3); epd.setCursor(24, 196); epd.print(buf);
     epd.setTextSize(1); epd.setCursor(24, 226); epd.print("zl/kWh");
@@ -573,7 +579,7 @@ void drawScreen() {
   } else {
     epd.setTextSize(1); epd.setCursor(24, 196); epd.print("brak danych");
   }
- 
+
   // Za godzinę — przerywana ramka
   epd.fillRect(203, 157, 185, 130, TFT_WHITE);
   for (int i = 203; i < 388; i += 8) {
@@ -594,17 +600,17 @@ void drawScreen() {
     else if (prices[currentPriceIdx+1].isExpensive) drawBadge(212, 248, 161, 24, "DROGA",    false);
     else                                              drawBadge(212, 248, 161, 24, "normalna", false);
   }
- 
+
   // Wykres 24h
   drawCard(396, 157, 394, 130);
   epd.setTextSize(1); epd.setCursor(410, 168); epd.print("Ceny 24h");
- 
+
   if (priceCount > 0) {
     int chartX = 438, chartY = 268, chartW = 342, chartH = 76;  // zmniejszone zeby etykiety miescily sie
     int startIdx = max(0, currentPriceIdx - 2);
     int endIdx   = min(priceCount - 1, startIdx + 23);
     int slotW    = chartW / max(endIdx - startIdx + 1, 1);
- 
+
     float minP = 9999, maxP = -9999;
     for (int i = startIdx; i <= endIdx; i++) {
       if (prices[i].price > 0) {
@@ -620,7 +626,7 @@ void drawScreen() {
     int zeroY = chartY - (int)((0.0f - scaleMin) / range * (chartH - 4));
     zeroY = max(zeroY, chartY - chartH + 4);
     zeroY = min(zeroY, chartY);
- 
+
     for (int i = startIdx; i <= endIdx; i++) {
       if (prices[i].price < -99) continue;  // pomiń brak ceny (null = -1)
       int x = chartX + (i - startIdx) * slotW;
@@ -641,7 +647,7 @@ void drawScreen() {
         if (y + h > botLimit) h = botLimit - y;
       }
       if (h < 2) continue;  // za maly - pomin
- 
+
       if (i == currentPriceIdx) {
         // Aktualny slot — normalny slupek ale z bialymi przerwami po bokach
         // Biala przerwa z lewej
@@ -670,7 +676,7 @@ void drawScreen() {
     epd.drawLine(chartX, zeroY, chartX+chartW, zeroY, TFT_BLACK);
     // Jesli sa ceny ujemne — cienka linia na dnie
     if (zeroY < chartY) epd.drawLine(chartX, chartY, chartX+chartW, chartY, TFT_BLACK);
- 
+
     // Legenda Y — min, max, i 0 jesli sa ujemne
     epd.setTextSize(1);
     char maxBuf[8], minBuf[8];
@@ -698,7 +704,7 @@ void drawScreen() {
     epd.drawLine(chartX - 1, chartY - (chartH-4), chartX - 1, chartY, TFT_BLACK);
     epd.drawLine(chartX - 3, chartY - (chartH-4), chartX - 1, chartY - (chartH-4), TFT_BLACK);
     epd.drawLine(chartX - 3, chartY, chartX - 1, chartY, TFT_BLACK);
- 
+
     // Etykiety godzin co 6h
     epd.setTextSize(1);
     for (int i = startIdx; i <= endIdx; i++) {
@@ -708,7 +714,7 @@ void drawScreen() {
         epd.setCursor(x, zeroY+4); epd.print(lb);
       }
     }
- 
+
     // Tanie zakresy — gruba linia pod słupkami
     int rs = -1;
     for (int i = startIdx; i <= endIdx; i++) {
@@ -722,15 +728,15 @@ void drawScreen() {
       }
     }
   }
- 
+
   // Separator
   epd.fillRect(10, 299, 780, 2, TFT_BLACK);
- 
+
   // ── Pasek tanich godzin (y:305-330) ───────────────────────────────────────
   epd.fillRect(10, 305, 780, 26, TFT_WHITE);
   epd.drawRect(10, 305, 780, 26, TFT_BLACK);
   epd.setTextSize(1); epd.setCursor(18, 315); epd.print("Najtaniej dzis:");
- 
+
   int bx = 115, rs2 = -1;
   int maxSlot = min(priceCount, 24);
   for (int i = 0; i < maxSlot; i++) {
@@ -750,7 +756,7 @@ void drawScreen() {
       rs2 = -1;
     }
   }
- 
+
   int mins = minutesToNextCheap();
   if (mins == 0) {
     epd.setCursor(580, 315); epd.print(">> teraz tania! <<");
@@ -759,7 +765,7 @@ void drawScreen() {
     snprintf(tb, sizeof(tb), "tania za %dh", mins/60 + (mins%60 > 0 ? 1 : 0));
     epd.setCursor(620, 315); epd.print(tb);
   }
- 
+
   // ── Rekomendacja (y:335-415) ──────────────────────────────────────────────
   epd.fillRect(10, 335, 780, 82, TFT_BLACK);
   String recDesc;
@@ -775,7 +781,7 @@ void drawScreen() {
   int descX = max(16, (800 - descW) / 2);
   epd.setTextSize(2); epd.setCursor(descX, 400); epd.print(recDesc);
   epd.setTextColor(TFT_BLACK, TFT_WHITE);
- 
+
   // ── Stopka ────────────────────────────────────────────────────────────────
   epd.fillRect(10, 423, 780, 2, TFT_BLACK);
   time_t now2 = time(nullptr);
@@ -787,10 +793,10 @@ void drawScreen() {
   epd.setCursor(16, 436); epd.print("Akt.: "); epd.print(timeBuf);
   epd.setCursor(520, 436); epd.print("budzenie #"); epd.print(rtc_bootCount);
   epd.setCursor(680, 436); epd.print(state.connected ? "EcoFlow: OK" : "EcoFlow: brak");
- 
+
   epd.update();
 }
- 
+
 void drawMsg(const String& l1, const String& l2) {
   epd.fillScreen(TFT_WHITE);
   epd.setTextColor(TFT_BLACK, TFT_WHITE);
@@ -799,27 +805,27 @@ void drawMsg(const String& l1, const String& l2) {
   if (l2.length()) { epd.setCursor(20, 60); epd.print(l2); }
   epd.update();
 }
- 
+
 // ─── Setup ────────────────────────────────────────────────────────────────────
 void setup() {
   Serial.begin(115200);
   rtc_bootCount++;
   delay(3000);  // okno serwisowe na Upload
- 
+
   epd.begin();
- 
+
   // Zaladuj efficiency z RTC cache
   state.independence = rtc_independence;
   state.forecastKwh  = rtc_forecastKwh;
   state.solarKwh     = rtc_solarKwh;
- 
+
   if (!connectWiFi()) {
     drawMsg("Brak WiFi!", "Spi 5 min...");
     WiFi.disconnect(true); WiFi.mode(WIFI_OFF);
     esp_deep_sleep((uint64_t)SLEEP_SECONDS * 1000000ULL);
     return;
   }
- 
+
   // NTP sync
   configTzTime(TZ_INFO, NTP_SERVER, NTP_SERVER_2);
   {
@@ -834,29 +840,27 @@ void setup() {
       return;
     }
   }
- 
+
   calcUtcOffset();
- 
+
   time_t now = time(nullptr);
   struct tm nowTm = {};
   localtime_r(&now, &nowTm);
   int currentHour = nowTm.tm_hour;
- 
+
   bool s = fetchState();
   bool p = fetchPrices(currentHour);
- 
-  WiFi.disconnect(true);
-  WiFi.mode(WIFI_OFF);
-  delay(100);
- 
+
+  const bool nightMode = isNightHours(nowTm.tm_hour);
+  const unsigned long sleepSec = calcSleepSeconds(nowTm.tm_hour, nowTm.tm_min);
+
   if (s && p) {
     drawScreen();
   } else {
     drawMsg("Blad pobierania!", !s ? "/api/state" : "/api/prices");
   }
- 
-  unsigned long sleepSec = calcSleepSeconds(nowTm.tm_hour, nowTm.tm_min);
-  if (sleepSec > SLEEP_SECONDS) {
+
+  if (nightMode) {
     epd.fillScreen(TFT_WHITE);
     epd.setTextColor(TFT_BLACK, TFT_WHITE);
     epd.setTextSize(2); epd.setCursor(20, 20); epd.print("Dobranoc :)");
@@ -866,10 +870,23 @@ void setup() {
     epd.setCursor(20, 80); epd.print(tb);
     epd.update();
   }
- 
+
+  // Check once as the device enters its long night sleep. The e-paper is not
+  // refreshed by OTA; it keeps its existing night image while firmware downloads.
+  if (!nightMode) {
+    rtc_nightUpdateChecked = false;
+  } else if (!rtc_nightUpdateChecked) {
+    rtc_nightUpdateChecked = true;
+    checkAndInstallFirmwareUpdate();
+  }
+
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_OFF);
+  delay(100);
+
   Serial.printf("Sleep %lus. Boot #%d\n", sleepSec, rtc_bootCount);
   esp_deep_sleep((uint64_t)sleepSec * 1000000ULL);
 }
- 
+
 void loop() {}
- 
+
