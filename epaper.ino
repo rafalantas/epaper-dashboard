@@ -73,6 +73,7 @@ struct DeviceSettings {
   float pvMaxW;
 };
 DeviceSettings deviceSettings;
+String latestGithubVersion;
 
 EPaper epd;
 RTC_DATA_ATTR int   rtc_bootCount        = 0;
@@ -342,8 +343,25 @@ String httpGet(const String& url) {
 bool fetchState() {
   String body = httpGet(deviceSettings.apiHost + "/api/state");
   if (body.isEmpty()) return false;
-  StaticJsonDocument<2048> doc;
-  if (deserializeJson(doc, body) != DeserializationError::Ok) return false;
+  // The server returns many fields (including a second device). Keep only the
+  // values used by this display so the response fits in the ESP32's JSON pool.
+  StaticJsonDocument<512> filter;
+  filter["pvTotal"] = true;
+  filter["soc"] = true;
+  filter["battPower"] = true;
+  filter["chgDsgState"] = true;
+  filter["sysLoad"] = true;
+  filter["feedPower"] = true;
+  filter["fromGrid"] = true;
+  filter["loadFromPv"] = true;
+  filter["loadFromBat"] = true;
+  filter["loadFromGrid"] = true;
+  filter["chgRemTime"] = true;
+  filter["dsgRemTime"] = true;
+  filter["connected"] = true;
+  StaticJsonDocument<768> doc;
+  if (deserializeJson(doc, body, DeserializationOption::Filter(filter)) != DeserializationError::Ok)
+    return false;
   state.pvTotal     = doc["pvTotal"]    | 0.0f;
   state.soc         = doc["soc"]        | 0.0f;
   state.battPower   = doc["battPower"]  | 0.0f;
@@ -855,6 +873,9 @@ void drawScreen() {
   epd.setCursor(16, 436); epd.print("Akt.: "); epd.print(timeBuf);
   epd.setCursor(520, 436); epd.print("budzenie #"); epd.print(rtc_bootCount);
   epd.setCursor(680, 436); epd.print(state.connected ? "EcoFlow: OK" : "EcoFlow: brak");
+  epd.setCursor(16, 452); epd.print("Firmware: v"); epd.print(FIRMWARE_VERSION);
+  epd.print("  GitHub: ");
+  epd.print(latestGithubVersion.isEmpty() ? "sprawdzanie nocne" : "v" + latestGithubVersion);
 
   epd.update();
 }
@@ -876,6 +897,13 @@ void setup() {
 
   epd.begin();
   loadDeviceSettings();
+  {
+    Preferences prefs;
+    if (prefs.begin("epaper", true)) {
+      latestGithubVersion = prefs.getString("ghVersion", "");
+      prefs.end();
+    }
+  }
 
   // Zaladuj efficiency z RTC cache
   state.independence = rtc_independence;
@@ -940,7 +968,15 @@ void setup() {
     rtc_nightUpdateChecked = false;
   } else if (!rtc_nightUpdateChecked) {
     rtc_nightUpdateChecked = true;
-    checkAndInstallFirmwareUpdate();
+    String checkedVersion;
+    checkAndInstallFirmwareUpdate(&checkedVersion);
+    if (!checkedVersion.isEmpty()) {
+      Preferences prefs;
+      if (prefs.begin("epaper", false)) {
+        prefs.putString("ghVersion", checkedVersion);
+        prefs.end();
+      }
+    }
   }
 
   WiFi.disconnect(true);
