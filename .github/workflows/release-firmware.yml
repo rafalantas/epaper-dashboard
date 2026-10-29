@@ -61,3 +61,10 @@ jobs:
           test -n "$firmware_bin"
           cp "$firmware_bin" dist/epaper-dashboard-xiao-esp32c3.bin
           ls -lh dist/epaper-dashboard-xiao-esp32c3.bin
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: dist/epaper-dashboard-xiao-esp32c3.bin
