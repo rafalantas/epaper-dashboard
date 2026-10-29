@@ -57,8 +57,18 @@ jobs:
             --libraries "$HOME/Arduino/libraries" \
             --output-dir dist \
             "$RUNNER_TEMP/epaper"
-          firmware_bin="$(find dist -maxdepth 1 -type f -name '*.bin' ! -name '*.bootloader.bin' ! -name '*.partitions.bin' -print -quit)"
-          test -n "$firmware_bin"
+          firmware_bin="dist/epaper.ino.bin"
+          test -f "$firmware_bin"
+          firmware_size="$(stat -c%s "$firmware_bin")"
+          if (( firmware_size > 1966080 )); then
+            echo "Firmware image exceeds the 1.875 MiB OTA slot: ${firmware_size} bytes" >&2
+            exit 1
+          fi
+          image_magic="$(od -An -tx1 -N1 "$firmware_bin" | tr -d '[:space:]')"
+          if [[ "$image_magic" != "e9" ]]; then
+            echo "Selected file is not an ESP32 app image (magic: ${image_magic})" >&2
+            exit 1
+          fi
           cp "$firmware_bin" dist/epaper-dashboard-xiao-esp32c3.bin
           ls -lh dist/epaper-dashboard-xiao-esp32c3.bin
 
