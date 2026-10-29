@@ -526,12 +526,6 @@ void drawScreen() {
   epd.fillScreen(TFT_WHITE);
   epd.setTextColor(TFT_BLACK, TFT_WHITE);
 
-  float allMinP = 9999, allMaxP = -9999;
-  for (int i = 0; i < min(priceCount, 24); i++) {
-    allMinP = min(allMinP, prices[i].price);
-    allMaxP = max(allMaxP, prices[i].price);
-  }
-
   // ── 4 karty górne (y:10-134) ──────────────────────────────────────────────
 
   // PV
@@ -644,48 +638,42 @@ void drawScreen() {
   // Separator
   epd.fillRect(10, 147, 780, 2, TFT_BLACK);
 
-  // ── Cena teraz (y:157-286) ────────────────────────────────────────────────
-  drawCard(10, 157, 185, 130);
-  epd.setTextSize(1); epd.setCursor(24, 170); epd.print("Cena teraz");
-  drawPriceTrend(150, 170);
+  // ── Ceny i wykres (y:157-287) ────────────────────────────────────────────
+  // Biezaca cena jest jedynym wypelnionym polem; reszta sekcji pozostaje lekka.
+  epd.fillRect(10, 157, 185, 130, TFT_BLACK);
+  epd.setTextColor(TFT_WHITE, TFT_BLACK);
+  epd.setTextSize(1); epd.setCursor(24, 174); epd.print("CENA TERAZ");
   if (currentPriceIdx >= 0) {
-
     char buf[10]; dtostrf(prices[currentPriceIdx].price, 4, 2, buf);
-    epd.setTextSize(3); epd.setCursor(24, 196); epd.print(buf);
-    epd.setTextSize(1); epd.setCursor(24, 226); epd.print("zl/kWh");
-    drawPriceMeter(24, 236, 157, prices[currentPriceIdx].price, allMinP, allMaxP);
-    // badge na pelna szerokosc karty z marginesem 8px, wyśrodkowany
-    if      (prices[currentPriceIdx].isCheap)     drawBadge(18, 248, 161, 24, "TANIA",    true);
-    else if (prices[currentPriceIdx].isExpensive) drawBadge(18, 248, 161, 24, "DROGA",    false);
-    else                                           drawBadge(18, 248, 161, 24, "normalna", false);
+    epd.setTextSize(4); epd.setCursor(24, 196); epd.print(buf);
+    epd.setTextSize(1); epd.setCursor(24, 232); epd.print("zl/kWh");
+    epd.setTextSize(2); epd.setCursor(24, 259);
+    if      (prices[currentPriceIdx].isCheap)     epd.print("TANIA");
+    else if (prices[currentPriceIdx].isExpensive) epd.print("DROGA");
+    else                                           epd.print("NORMALNA");
   } else {
-    epd.setTextSize(1); epd.setCursor(24, 196); epd.print("brak danych");
+    epd.setTextSize(2); epd.setCursor(24, 214); epd.print("BRAK DANYCH");
   }
+  epd.setTextColor(TFT_BLACK, TFT_WHITE);
 
-  // Za godzinę — przerywana ramka
-  epd.fillRect(203, 157, 185, 130, TFT_WHITE);
-  for (int i = 203; i < 388; i += 8) {
-    epd.drawLine(i, 157, min(i+5, 387), 157, TFT_BLACK);
-    epd.drawLine(i, 286, min(i+5, 387), 286, TFT_BLACK);
-  }
-  for (int i = 157; i < 287; i += 8) {
-    epd.drawLine(203, i, 203, min(i+5, 286), TFT_BLACK);
-    epd.drawLine(387, i, 387, min(i+5, 286), TFT_BLACK);
-  }
-  epd.setTextSize(1); epd.setCursor(217, 170); epd.print("Za godzine");
+  // Cena kolejnej godziny: prosty podzial pionowy zamiast przerywanej ramki.
+  epd.drawLine(203, 157, 203, 287, TFT_BLACK);
+  epd.setTextSize(1); epd.setCursor(218, 174); epd.print("ZA GODZINE");
   if (currentPriceIdx >= 0 && currentPriceIdx + 1 < priceCount) {
     char buf[10]; dtostrf(prices[currentPriceIdx+1].price, 4, 2, buf);
-    epd.setTextSize(3); epd.setCursor(217, 196); epd.print(buf);
-    epd.setTextSize(1); epd.setCursor(217, 226); epd.print("zl/kWh");
-    drawPriceMeter(217, 236, 157, prices[currentPriceIdx+1].price, allMinP, allMaxP);
-    if      (prices[currentPriceIdx+1].isCheap)     drawBadge(212, 248, 161, 24, "TANIA",    true);
-    else if (prices[currentPriceIdx+1].isExpensive) drawBadge(212, 248, 161, 24, "DROGA",    false);
-    else                                              drawBadge(212, 248, 161, 24, "normalna", false);
+    epd.setTextSize(4); epd.setCursor(218, 196); epd.print(buf);
+    epd.setTextSize(1); epd.setCursor(218, 232); epd.print("zl/kWh");
+    epd.setTextSize(2); epd.setCursor(218, 259);
+    if      (prices[currentPriceIdx+1].isCheap)     epd.print("TANIA");
+    else if (prices[currentPriceIdx+1].isExpensive) epd.print("DROGA");
+    else                                              epd.print("NORMALNA");
+  } else {
+    epd.setTextSize(1); epd.setCursor(218, 214); epd.print("brak danych");
   }
 
   // Wykres 24h
-  drawCard(396, 157, 394, 130);
-  epd.setTextSize(1); epd.setCursor(410, 168); epd.print("Ceny 24h");
+  epd.drawLine(396, 157, 790, 157, TFT_BLACK);
+  epd.setTextSize(1); epd.setCursor(410, 174); epd.print("CENY ENERGII - 24H");
 
   if (priceCount > 0) {
     int chartX = 438, chartY = 268, chartW = 342, chartH = 76;  // zmniejszone zeby etykiety miescily sie
@@ -808,15 +796,23 @@ void drawScreen() {
     }
   }
 
-  // Separator
+  // ── Rekomendacja i najtansze godziny ──────────────────────────────────────
   epd.fillRect(10, 299, 780, 2, TFT_BLACK);
+  epd.fillRect(10, 305, 780, 74, TFT_BLACK);
+  String recDesc;
+  String rec = getRecommendation(recDesc);
+  epd.setTextColor(TFT_WHITE, TFT_BLACK);
+  int recW = rec.length() * 18;
+  int recX = max(16, (800 - recW) / 2);
+  epd.setTextSize(3); epd.setCursor(recX, 317); epd.print(rec);
+  int descW = recDesc.length() * 6;
+  int descX = max(16, (800 - descW) / 2);
+  epd.setTextSize(1); epd.setCursor(descX, 358); epd.print(recDesc);
+  epd.setTextColor(TFT_BLACK, TFT_WHITE);
 
-  // ── Pasek tanich godzin (y:305-330) ───────────────────────────────────────
-  epd.fillRect(10, 305, 780, 26, TFT_WHITE);
-  epd.drawRect(10, 305, 780, 26, TFT_BLACK);
-  epd.setTextSize(1); epd.setCursor(18, 315); epd.print("Najtaniej dzis:");
-
-  int bx = 115, rs2 = -1;
+  epd.drawLine(10, 386, 790, 386, TFT_BLACK);
+  epd.setTextSize(1); epd.setCursor(18, 401); epd.print("NAJTANIEJ DZIS:");
+  int bx = 128, rs2 = -1, cheapRanges = 0;
   int maxSlot = min(priceCount, 24);
   for (int i = 0; i < maxSlot; i++) {
     if (prices[i].isCheap && rs2 < 0) rs2 = i;
@@ -825,41 +821,30 @@ void drawScreen() {
       char lb[10];
       snprintf(lb, sizeof(lb), "%02d-%02dh", prices[rs2].hour, prices[i].hour+1);
       int bw = strlen(lb)*6+8;
-      if (bx+bw < 570) {
-        epd.fillRect(bx, 308, bw, 18, TFT_BLACK);
+      if (bx+bw < 600) {
+        epd.fillRect(bx, 392, bw, 18, TFT_BLACK);
         epd.setTextColor(TFT_WHITE, TFT_BLACK);
-        epd.setCursor(bx+4, 315); epd.print(lb);
+        epd.setCursor(bx+4, 399); epd.print(lb);
         epd.setTextColor(TFT_BLACK, TFT_WHITE);
         bx += bw+5;
+        cheapRanges++;
       }
       rs2 = -1;
     }
   }
+  if (cheapRanges == 0) {
+    epd.setCursor(128, 401);
+    epd.print(priceCount > 0 ? "brak tanszych godzin w danych" : "brak danych cenowych");
+  }
 
   int mins = minutesToNextCheap();
   if (mins == 0) {
-    epd.setCursor(580, 315); epd.print(">> teraz tania! <<");
+    epd.setCursor(620, 401); epd.print("TERAZ TANIA");
   } else if (mins > 0) {
     char tb[20];
     snprintf(tb, sizeof(tb), "tania za %dh", mins/60 + (mins%60 > 0 ? 1 : 0));
-    epd.setCursor(620, 315); epd.print(tb);
+    epd.setCursor(650, 401); epd.print(tb);
   }
-
-  // ── Rekomendacja (y:335-415) ──────────────────────────────────────────────
-  epd.fillRect(10, 335, 780, 82, TFT_BLACK);
-  String recDesc;
-  String rec = getRecommendation(recDesc);
-  epd.setTextColor(TFT_WHITE, TFT_BLACK);
-  // Glowna rekomendacja — textSize 4, wycentrowana pionowo i poziomo
-  // textSize 4: kazdy znak ~24px szeroki, ~32px wysoki
-  int recW = rec.length() * 24;
-  int recX = max(16, (800 - recW) / 2);
-  epd.setTextSize(4); epd.setCursor(recX, 348); epd.print(rec);
-  // Opis — textSize 2, wycentrowany na dole
-  int descW = recDesc.length() * 12;
-  int descX = max(16, (800 - descW) / 2);
-  epd.setTextSize(2); epd.setCursor(descX, 400); epd.print(recDesc);
-  epd.setTextColor(TFT_BLACK, TFT_WHITE);
 
   // ── Stopka ────────────────────────────────────────────────────────────────
   epd.fillRect(10, 423, 780, 2, TFT_BLACK);
