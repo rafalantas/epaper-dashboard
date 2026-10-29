@@ -87,7 +87,8 @@ static bool checkAndInstallFirmwareUpdate(String* checkedVersion = nullptr) {
   Serial.printf("OTA: aktualizacja %s -> %s\n", FIRMWARE_VERSION, latestVersion.c_str());
   HTTPUpdate updater(90000);
   updater.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
-  updater.rebootOnUpdate(true);
+  // Let setup() save the discovered version before restarting.
+  updater.rebootOnUpdate(false);
   const auto result = updater.update(secureClient, firmwareUrl, FIRMWARE_VERSION);
   if (result == HTTP_UPDATE_FAILED) {
     Serial.printf("OTA: niepowodzenie: %s\n", updater.getLastErrorString().c_str());

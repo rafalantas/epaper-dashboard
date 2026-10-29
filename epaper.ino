@@ -143,9 +143,14 @@ bool isNightHours(int localHour) {
 unsigned long calcSleepSeconds(int localHour, int localMin) {
   bool isNight = isNightHours(localHour);
   if (!isNight) return deviceSettings.sleepSeconds;
-  int hoursLeft = (localHour >= deviceSettings.nightHourStart)
-    ? (24 - localHour + deviceSettings.nightHourEnd)
-    : (deviceSettings.nightHourEnd - localHour);
+  int hoursLeft;
+  if (deviceSettings.nightHourStart > deviceSettings.nightHourEnd) {
+    hoursLeft = (localHour >= deviceSettings.nightHourStart)
+      ? (24 - localHour + deviceSettings.nightHourEnd)
+      : (deviceSettings.nightHourEnd - localHour);
+  } else {
+    hoursLeft = deviceSettings.nightHourEnd - localHour;
+  }
   unsigned long secs = (unsigned long)hoursLeft * 3600UL - (unsigned long)localMin * 60UL;
   return max(secs, 60UL);
 }
@@ -443,7 +448,6 @@ bool fetchPrices(int currentLocalHour) {
     if (priceCount >= 48) break;
     if (slot["price"].isNull()) continue;
     float price = slot["price"] | 0.0f;
-    if (price <= 0) continue;
 
     prices[priceCount].price       = price;
     prices[priceCount].isCheap     = slot["isCheap"]     | false;
@@ -524,10 +528,8 @@ void drawScreen() {
 
   float allMinP = 9999, allMaxP = -9999;
   for (int i = 0; i < min(priceCount, 24); i++) {
-    if (prices[i].price > 0) {
-      allMinP = min(allMinP, prices[i].price);
-      allMaxP = max(allMaxP, prices[i].price);
-    }
+    allMinP = min(allMinP, prices[i].price);
+    allMaxP = max(allMaxP, prices[i].price);
   }
 
   // ── 4 karty górne (y:10-134) ──────────────────────────────────────────────
@@ -693,10 +695,8 @@ void drawScreen() {
 
     float minP = 9999, maxP = -9999;
     for (int i = startIdx; i <= endIdx; i++) {
-      if (prices[i].price > 0) {
-        minP = min(minP, prices[i].price);
-        maxP = max(maxP, prices[i].price);
-      }
+      minP = min(minP, prices[i].price);
+      maxP = max(maxP, prices[i].price);
     }
     // scaleMin moze byc ujemny — obslugujemy ceny ponizej zera
     float margin   = (maxP - minP) * 0.1f;
@@ -708,7 +708,6 @@ void drawScreen() {
     zeroY = min(zeroY, chartY);
 
     for (int i = startIdx; i <= endIdx; i++) {
-      if (prices[i].price < -99) continue;  // pomiń brak ceny (null = -1)
       int x = chartX + (i - startIdx) * slotW;
       int h, y;
       if (prices[i].price >= 0) {
@@ -962,6 +961,7 @@ void setup() {
     epd.update();
   }
 
+  bool otaUpdated = false;
   // Check once as the device enters its long night sleep. The e-paper is not
   // refreshed by OTA; it keeps its existing night image while firmware downloads.
   if (!nightMode) {
@@ -969,7 +969,7 @@ void setup() {
   } else if (!rtc_nightUpdateChecked) {
     rtc_nightUpdateChecked = true;
     String checkedVersion;
-    checkAndInstallFirmwareUpdate(&checkedVersion);
+    otaUpdated = checkAndInstallFirmwareUpdate(&checkedVersion);
     if (!checkedVersion.isEmpty()) {
       Preferences prefs;
       if (prefs.begin("epaper", false)) {
@@ -982,6 +982,11 @@ void setup() {
   WiFi.disconnect(true);
   WiFi.mode(WIFI_OFF);
   delay(100);
+
+  if (otaUpdated) {
+    Serial.println("OTA: wersja zapisana, restartuje urzadzenie");
+    ESP.restart();
+  }
 
   Serial.printf("Sleep %lus. Boot #%d\n", sleepSec, rtc_bootCount);
   esp_deep_sleep((uint64_t)sleepSec * 1000000ULL);
