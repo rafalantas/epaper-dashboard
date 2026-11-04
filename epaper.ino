@@ -75,26 +75,17 @@ float houseLoadW() {
   return state.sysLoad >= 0 ? state.sysLoad : -1.0f;
 }
 
-struct BatteryFlows {
-  float charging;
-  float discharging;
-};
-
-BatteryFlows batteryFlows(float power, int chgDsgState) {
-  BatteryFlows flows = {0, 0};
-  if (chgDsgState == 2) flows.charging = fabsf(power);
-  else if (chgDsgState == 1) flows.discharging = fabsf(power);
-  else if (power > 20) flows.charging = power;
-  else if (power < -20) flows.discharging = fabsf(power);
-  return flows;
+float batteryFlowAmount(float power, int chgDsgState, bool charging) {
+  if (chgDsgState == 2) return charging ? fabsf(power) : 0;
+  if (chgDsgState == 1) return charging ? 0 : fabsf(power);
+  if (power > 20) return charging ? power : 0;
+  if (power < -20) return charging ? 0 : fabsf(power);
+  return 0;
 }
 
-BatteryFlows totalBatteryFlows() {
-  BatteryFlows first = batteryFlows(state.battPower, state.chgDsgState);
-  BatteryFlows second = batteryFlows(state.battPower2, state.chgDsgState2);
-  BatteryFlows total = {first.charging + second.charging,
-                        first.discharging + second.discharging};
-  return total;
+float totalBatteryFlow(bool charging) {
+  return batteryFlowAmount(state.battPower, state.chgDsgState, charging) +
+         batteryFlowAmount(state.battPower2, state.chgDsgState2, charging);
 }
 
 struct DeviceSettings {
@@ -610,10 +601,11 @@ void drawScreen() {
   int arrowBot = 64;   // dol cyfr SOC
   int arrowMid = (arrowTop + arrowBot) / 2;
 
-  BatteryFlows battFlows = totalBatteryFlows();
-  bool batteryCharging = battFlows.charging > 20 && battFlows.charging >= battFlows.discharging;
-  bool batteryDischarging = battFlows.discharging > 20 && battFlows.discharging > battFlows.charging;
-  int batteryNetPower = (int)fabsf(battFlows.charging - battFlows.discharging);
+  float batteryChargeW = totalBatteryFlow(true);
+  float batteryDischargeW = totalBatteryFlow(false);
+  bool batteryCharging = batteryChargeW > 20 && batteryChargeW >= batteryDischargeW;
+  bool batteryDischarging = batteryDischargeW > 20 && batteryDischargeW > batteryChargeW;
+  int batteryNetPower = (int)fabsf(batteryChargeW - batteryDischargeW);
 
   if (batteryCharging) {
     // Strzalka w gore (ladowanie)
