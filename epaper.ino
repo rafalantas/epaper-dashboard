@@ -63,6 +63,16 @@ int       priceCount      = 0;
 int       currentPriceIdx = -1;
 long      g_utcOffsetSec  = 7200;
 
+// powGetSysLoad is signed (negative means export). Household consumption is
+// the sum of the positive PV, battery and grid contributions instead.
+float houseLoadW() {
+  float fromSources = max(0.0f, state.loadFromPv) +
+                      max(0.0f, state.loadFromBat) +
+                      max(0.0f, state.loadFromGrid);
+  if (fromSources > 0) return fromSources;
+  return state.sysLoad >= 0 ? state.sysLoad : -1.0f;
+}
+
 struct DeviceSettings {
   String wifiSsid;
   String wifiPassword;
@@ -504,8 +514,8 @@ String getRecommendation(String& desc) {
   bool  nextCheap = (currentPriceIdx + 1 < priceCount) && prices[currentPriceIdx+1].isCheap;
   float pv        = state.pvTotal;
   float soc       = state.soc;
-  float load      = state.sysLoad;
-  bool  pvSurplus = (pv > load + 200);
+  float load      = houseLoadW();
+  bool  pvSurplus = (load >= 0 && pv > load + 200);
   bool  pvGood    = (pv > 1000);
 
   if (cheap && pvGood)       { desc = "Tania cena + duze PV";      return "UZYWAJ TERAZ"; }
@@ -600,15 +610,27 @@ void drawScreen() {
   drawCard(406, 10, 190, 125);
   drawIcon(414, 18, ICON_HOME);
   epd.setTextSize(1); epd.setCursor(434, 24); epd.print("Zuzycie");
-  epd.setTextSize(3); epd.setCursor(414, 48); epd.print(String((int)state.sysLoad));
-  epd.setTextSize(2); epd.setCursor(414+String((int)state.sysLoad).length()*18+2, 55); epd.print("W");
-  // Jedna linia: PV + Bat + Siec
+  float loadW = houseLoadW();
+  if (loadW >= 0) {
+    String loadText = String((int)loadW);
+    epd.setTextSize(3); epd.setCursor(414, 48); epd.print(loadText);
+    epd.setTextSize(2); epd.setCursor(414+loadText.length()*18+2, 55); epd.print("W");
+  } else {
+    epd.setTextSize(2); epd.setCursor(414, 52); epd.print("BRAK DANYCH");
+  }
+  // Zrodla zuzycia: PV + bateria + siec
   epd.setTextSize(1); epd.setCursor(414, 90);
-  char zLine[24];
-  snprintf(zLine, sizeof(zLine), "PV:%dW  Bat:%dW",
-    (int)state.loadFromPv, (int)state.loadFromBat);
-  epd.print(zLine);
-  int pvCover = (state.sysLoad > 0) ? (int)(state.loadFromPv / state.sysLoad * 100.0f) : 0;
+  if (loadW >= 0) {
+    char zLine[30];
+    snprintf(zLine, sizeof(zLine), "PV:%d Bat:%d Siec:%d",
+      (int)max(0.0f, state.loadFromPv),
+      (int)max(0.0f, state.loadFromBat),
+      (int)max(0.0f, state.loadFromGrid));
+    epd.print(zLine);
+  } else {
+    epd.print("brak danych zuzycia");
+  }
+  int pvCover = (loadW > 0) ? (int)(max(0.0f, state.loadFromPv) / loadW * 100.0f) : 0;
   pvCover = min(pvCover, 100);
   drawBar(414, 104, 168, 8, (float)pvCover);
 
