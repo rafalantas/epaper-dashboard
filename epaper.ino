@@ -33,7 +33,9 @@ struct State {
   float pvTotal     = 0;
   float soc         = 0;
   float battPower   = 0;
+  float battPower2  = 0;
   int   chgDsgState = 0;
+  int   chgDsgState2= 0;
   float sysLoad     = 0;
   float feedPower   = 0;
   float fromGrid    = 0;
@@ -71,6 +73,28 @@ float houseLoadW() {
                       max(0.0f, state.loadFromGrid);
   if (fromSources > 0) return fromSources;
   return state.sysLoad >= 0 ? state.sysLoad : -1.0f;
+}
+
+struct BatteryFlows {
+  float charging;
+  float discharging;
+};
+
+BatteryFlows batteryFlows(float power, int chgDsgState) {
+  BatteryFlows flows = {0, 0};
+  if (chgDsgState == 2) flows.charging = fabsf(power);
+  else if (chgDsgState == 1) flows.discharging = fabsf(power);
+  else if (power > 20) flows.charging = power;
+  else if (power < -20) flows.discharging = fabsf(power);
+  return flows;
+}
+
+BatteryFlows totalBatteryFlows() {
+  BatteryFlows first = batteryFlows(state.battPower, state.chgDsgState);
+  BatteryFlows second = batteryFlows(state.battPower2, state.chgDsgState2);
+  BatteryFlows total = {first.charging + second.charging,
+                        first.discharging + second.discharging};
+  return total;
 }
 
 struct DeviceSettings {
@@ -365,6 +389,8 @@ bool fetchState() {
   filter["soc"] = true;
   filter["battPower"] = true;
   filter["chgDsgState"] = true;
+  filter["device2"]["battPower"] = true;
+  filter["device2"]["chgDsgState"] = true;
   filter["sysLoad"] = true;
   filter["feedPower"] = true;
   filter["fromGrid"] = true;
@@ -381,6 +407,8 @@ bool fetchState() {
   state.soc         = doc["soc"]        | 0.0f;
   state.battPower   = doc["battPower"]  | 0.0f;
   state.chgDsgState = doc["chgDsgState"]| 0;
+  state.battPower2  = doc["device2"]["battPower"] | 0.0f;
+  state.chgDsgState2= doc["device2"]["chgDsgState"] | 0;
   state.sysLoad     = doc["sysLoad"]    | 0.0f;
   state.feedPower   = doc["feedPower"]  | 0.0f;
   state.fromGrid    = doc["fromGrid"]   | 0.0f;
@@ -582,7 +610,12 @@ void drawScreen() {
   int arrowBot = 64;   // dol cyfr SOC
   int arrowMid = (arrowTop + arrowBot) / 2;
 
-  if (state.chgDsgState == 2) {
+  BatteryFlows battFlows = totalBatteryFlows();
+  bool batteryCharging = battFlows.charging > 20 && battFlows.charging >= battFlows.discharging;
+  bool batteryDischarging = battFlows.discharging > 20 && battFlows.discharging > battFlows.charging;
+  int batteryNetPower = (int)fabsf(battFlows.charging - battFlows.discharging);
+
+  if (batteryCharging) {
     // Strzalka w gore (ladowanie)
     epd.fillTriangle(arrowX, arrowBot, arrowX+14, arrowBot, arrowX+7, arrowTop, TFT_BLACK);
     epd.fillRect(arrowX+4, arrowBot-2, 6, 6, TFT_BLACK);
@@ -590,8 +623,8 @@ void drawScreen() {
     if (state.chgRemTime > 0) {
       char tBuf[20]; snprintf(tBuf, sizeof(tBuf), "pelna za %dh %02dmin", state.chgRemTime/60, state.chgRemTime%60);
       epd.print(tBuf);
-    } else { epd.print("laduje " + String((int)fabs(state.battPower)) + "W"); }
-  } else if (state.chgDsgState == 1) {
+    } else { epd.print("laduje " + String(batteryNetPower) + "W"); }
+  } else if (batteryDischarging) {
     // Strzalka w dol (rozladowanie)
     epd.fillTriangle(arrowX, arrowTop, arrowX+14, arrowTop, arrowX+7, arrowBot, TFT_BLACK);
     epd.fillRect(arrowX+4, arrowTop-4, 6, 6, TFT_BLACK);
@@ -599,7 +632,7 @@ void drawScreen() {
     if (state.dsgRemTime > 0) {
       char tBuf[20]; snprintf(tBuf, sizeof(tBuf), "zostalo %dh %02dmin", state.dsgRemTime/60, state.dsgRemTime%60);
       epd.print(tBuf);
-    } else { epd.print("rozlad " + String((int)fabs(state.battPower)) + "W"); }
+    } else { epd.print("rozlad " + String(batteryNetPower) + "W"); }
   } else {
     epd.fillRect(arrowX, arrowMid, 14, 3, TFT_BLACK);
     epd.setTextSize(1); epd.setCursor(216, 90); epd.print("idle");
@@ -609,7 +642,7 @@ void drawScreen() {
   // Dom
   drawCard(406, 10, 190, 125);
   drawIcon(414, 18, ICON_HOME);
-  epd.setTextSize(1); epd.setCursor(434, 24); epd.print("Zuzycie");
+  epd.setTextSize(1); epd.setCursor(434, 24); epd.print("Dom");
   float loadW = houseLoadW();
   if (loadW >= 0) {
     String loadText = String((int)loadW);
