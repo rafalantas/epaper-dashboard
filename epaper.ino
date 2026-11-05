@@ -32,6 +32,7 @@ const char* TZ_INFO      = "CET-1CEST,M3.5.0,M10.5.0/3";
 struct State {
   float pvTotal     = 0;
   float soc         = 0;
+  float systemSoc   = -1;
   float battPower   = 0;
   float battPower2  = 0;
   int   chgDsgState = 0;
@@ -72,7 +73,14 @@ float houseLoadW() {
                       max(0.0f, state.loadFromBat) +
                       max(0.0f, state.loadFromGrid);
   if (fromSources > 0) return fromSources;
-  return state.sysLoad >= 0 ? state.sysLoad : -1.0f;
+  // EcoFlow's sysLoad is signed: a negative value means export to the grid.
+  return state.sysLoad;
+}
+
+// EcoFlow can report 5939 minutes while a battery is idle. Treat implausible
+// countdowns as unavailable instead of showing nearly 99 hours on the screen.
+bool validBatteryRuntime(int minutes) {
+  return minutes > 0 && minutes <= 24 * 60;
 }
 
 float batteryFlowAmount(float power, int chgDsgState, bool charging) {
@@ -375,9 +383,10 @@ bool fetchState() {
   if (body.isEmpty()) return false;
   // The server returns many fields (including a second device). Keep only the
   // values used by this display so the response fits in the ESP32's JSON pool.
-  StaticJsonDocument<512> filter;
+  StaticJsonDocument<768> filter;
   filter["pvTotal"] = true;
   filter["soc"] = true;
+  filter["cmsBattSoc"] = true;
   filter["battPower"] = true;
   filter["chgDsgState"] = true;
   filter["device2"]["battPower"] = true;
@@ -391,11 +400,12 @@ bool fetchState() {
   filter["chgRemTime"] = true;
   filter["dsgRemTime"] = true;
   filter["connected"] = true;
-  StaticJsonDocument<768> doc;
+  StaticJsonDocument<1024> doc;
   if (deserializeJson(doc, body, DeserializationOption::Filter(filter)) != DeserializationError::Ok)
     return false;
   state.pvTotal     = doc["pvTotal"]    | 0.0f;
   state.soc         = doc["soc"]        | 0.0f;
+  state.systemSoc   = doc["cmsBattSoc"] | -1.0f;
   state.battPower   = doc["battPower"]  | 0.0f;
   state.chgDsgState = doc["chgDsgState"]| 0;
   state.battPower2  = doc["device2"]["battPower"] | 0.0f;
@@ -532,7 +542,7 @@ String getRecommendation(String& desc) {
   bool  normal    = !cheap && !expensive;
   bool  nextCheap = (currentPriceIdx + 1 < priceCount) && prices[currentPriceIdx+1].isCheap;
   float pv        = state.pvTotal;
-  float soc       = state.soc;
+  float soc       = state.systemSoc >= 0 && state.systemSoc <= 100 ? state.systemSoc : state.soc;
   float load      = houseLoadW();
   bool  pvSurplus = (load >= 0 && pv > load + 200);
   bool  pvGood    = (pv > 1000);
@@ -589,8 +599,9 @@ void drawScreen() {
   drawCard(208, 10, 190, 125);
   drawIcon(216, 18, ICON_BAT);
   epd.setTextSize(1); epd.setCursor(236, 24); epd.print("Bateria EcoFlow");
-  epd.setTextSize(3); epd.setCursor(216, 48); epd.print(String((int)state.soc));
-  epd.setTextSize(2); epd.setCursor(216+String((int)state.soc).length()*18+2, 55); epd.print("%");
+  float batterySoc = state.systemSoc >= 0 && state.systemSoc <= 100 ? state.systemSoc : state.soc;
+  epd.setTextSize(3); epd.setCursor(216, 48); epd.print(String((int)batterySoc));
+  epd.setTextSize(2); epd.setCursor(216+String((int)batterySoc).length()*18+2, 55); epd.print("%");
   // Strzalka kierunku + moc + czas
   epd.setTextSize(1);
   // Strzalka — ta sama wysokosc co cyfry % (textSize 3 = ~24px)
@@ -612,7 +623,7 @@ void drawScreen() {
     epd.fillTriangle(arrowX, arrowBot, arrowX+14, arrowBot, arrowX+7, arrowTop, TFT_BLACK);
     epd.fillRect(arrowX+4, arrowBot-2, 6, 6, TFT_BLACK);
     epd.setTextSize(1); epd.setCursor(216, 90);
-    if (state.chgRemTime > 0) {
+    if (validBatteryRuntime(state.chgRemTime)) {
       char tBuf[20]; snprintf(tBuf, sizeof(tBuf), "pelna za %dh %02dmin", state.chgRemTime/60, state.chgRemTime%60);
       epd.print(tBuf);
     } else { epd.print("laduje " + String(batteryNetPower) + "W"); }
@@ -621,7 +632,7 @@ void drawScreen() {
     epd.fillTriangle(arrowX, arrowTop, arrowX+14, arrowTop, arrowX+7, arrowBot, TFT_BLACK);
     epd.fillRect(arrowX+4, arrowTop-4, 6, 6, TFT_BLACK);
     epd.setTextSize(1); epd.setCursor(216, 90);
-    if (state.dsgRemTime > 0) {
+    if (validBatteryRuntime(state.dsgRemTime)) {
       char tBuf[20]; snprintf(tBuf, sizeof(tBuf), "zostalo %dh %02dmin", state.dsgRemTime/60, state.dsgRemTime%60);
       epd.print(tBuf);
     } else { epd.print("rozlad " + String(batteryNetPower) + "W"); }
@@ -629,14 +640,14 @@ void drawScreen() {
     epd.fillRect(arrowX, arrowMid, 14, 3, TFT_BLACK);
     epd.setTextSize(1); epd.setCursor(216, 90); epd.print("idle");
   }
-  drawBar(216, 104, 168, 8, state.soc);
+  drawBar(216, 104, 168, 8, batterySoc);
 
   // Dom
   drawCard(406, 10, 190, 125);
   drawIcon(414, 18, ICON_HOME);
   epd.setTextSize(1); epd.setCursor(434, 24); epd.print("Dom");
   float loadW = houseLoadW();
-  if (loadW >= 0) {
+  if (loadW != 0 || state.connected) {
     String loadText = String((int)loadW);
     epd.setTextSize(3); epd.setCursor(414, 48); epd.print(loadText);
     epd.setTextSize(2); epd.setCursor(414+loadText.length()*18+2, 55); epd.print("W");
@@ -645,7 +656,7 @@ void drawScreen() {
   }
   // Zrodla zuzycia: PV + bateria + siec
   epd.setTextSize(1); epd.setCursor(414, 90);
-  if (loadW >= 0) {
+  if (loadW != 0 || state.connected) {
     char zLine[30];
     snprintf(zLine, sizeof(zLine), "PV:%d Bat:%d Siec:%d",
       (int)max(0.0f, state.loadFromPv),
