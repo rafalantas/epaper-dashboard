@@ -26,7 +26,14 @@ jobs:
           arduino-cli config init
           arduino-cli config add board_manager.additional_urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
           arduino-cli core update-index
-          arduino-cli core install esp32:esp32@3.0.7 --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+          for attempt in 1 2 3 4 5; do
+            if arduino-cli core install esp32:esp32@3.0.7 --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json; then
+              break
+            fi
+            if [[ "$attempt" == "5" ]]; then exit 1; fi
+            echo "ESP32 core install failed (attempt $attempt); retrying in 10 seconds"
+            sleep 10
+          done
           arduino-cli lib install ArduinoJson@6.21.5
           mkdir -p "$HOME/Arduino/libraries"
           git clone --depth 1 --branch V3.1.0 https://github.com/Seeed-Studio/Seeed_GFX.git "$HOME/Arduino/libraries/Seeed_GFX"
@@ -36,7 +43,7 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
           REF_TYPE: ${{ github.ref_type }}
         run: |
-          version="0.1.9"
+          version="0.1.10"
           if [[ "$REF_TYPE" == "tag" ]]; then
             version="${RELEASE_TAG#v}"
             if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
