@@ -46,6 +46,7 @@ struct State {
   // Efficiency
   float solarKwh    = 0;
   float forecastKwh = 0;
+  float forecastTomorrowKwh = -1;
   float independence= 0;
   int   chgRemTime  = 0;
   int   dsgRemTime  = 0;
@@ -113,6 +114,7 @@ RTC_DATA_ATTR int   rtc_bootCount        = 0;
 RTC_DATA_ATTR float rtc_independence      = 0;
 RTC_DATA_ATTR float rtc_forecastKwh       = 0;
 RTC_DATA_ATTR float rtc_solarKwh          = 0;
+RTC_DATA_ATTR float rtc_forecastTomorrowKwh = -1;
 RTC_DATA_ATTR int   rtc_effFetchHour      = -1;
 RTC_DATA_ATTR bool  rtc_nightUpdateChecked = false;
 
@@ -453,7 +455,9 @@ bool fetchEfficiency() {
       DynamicJsonDocument doc(4096);
       if (deserializeJson(doc, body) == DeserializationError::Ok) {
         state.forecastKwh = doc["forecastKwh"] | 0.0f;
-        Serial.printf("forecast OK: %.1f kWh\n", state.forecastKwh);
+        state.forecastTomorrowKwh = doc["forecastTomorrow"] | -1.0f;
+        Serial.printf("forecast OK: today=%.1f tomorrow=%.1f kWh\n",
+          state.forecastKwh, state.forecastTomorrowKwh);
         ok = true;
       }
     }
@@ -575,8 +579,8 @@ void drawScreen() {
   epd.setTextSize(2); epd.setCursor(18 + String((int)state.pvTotal).length()*18+2, 55); epd.print("W");
   int pvPct = (int)(state.pvTotal / deviceSettings.pvMaxW * 100.0f);
   pvPct = min(pvPct, 100);
-  // Linia 1: dziś kWh + efektywność LUB produkcja %
-  epd.setTextSize(1); epd.setCursor(18, 90);
+  // Dwie krótkie linie mieszczą dzisiejszą produkcję i prognozę na jutro.
+  epd.setTextSize(1); epd.setCursor(18, 82);
   if (state.solarKwh > 0 && state.independence > 0) {
     char pLine[28];
     snprintf(pLine, sizeof(pLine), "%.1fkWh  eff:%.0f%%",
@@ -591,9 +595,17 @@ void drawScreen() {
   } else {
     epd.print("brak slonca");
   }
+  epd.setCursor(18, 94);
+  if (state.forecastTomorrowKwh > 0) {
+    char tomorrowLine[28];
+    snprintf(tomorrowLine, sizeof(tomorrowLine), "Jutro PV: %.1f kWh", state.forecastTomorrowKwh);
+    epd.print(tomorrowLine);
+  } else {
+    epd.print("Jutro PV: brak prognozy");
+  }
   // Pasek efektywnosci (lub mocy szczytowej jako fallback)
   float barVal = state.independence > 0 ? state.independence : (float)pvPct;
-  drawBar(18, 104, 168, 8, barVal);
+  drawBar(18, 112, 168, 8, barVal);
 
   // Bateria
   drawCard(208, 10, 190, 125);
@@ -951,6 +963,7 @@ void setup() {
   state.independence = rtc_independence;
   state.forecastKwh  = rtc_forecastKwh;
   state.solarKwh     = rtc_solarKwh;
+  state.forecastTomorrowKwh = rtc_forecastTomorrowKwh;
 
   if (!connectWiFi()) {
     drawMsg("Brak WiFi!", "Spi 5 min...");
@@ -980,6 +993,18 @@ void setup() {
   struct tm nowTm = {};
   localtime_r(&now, &nowTm);
   int currentHour = nowTm.tm_hour;
+
+  // Prognoza i statystyki zmieniają się wolno; pobieraj je najwyżej raz na godzinę.
+  const int efficiencyFetchSlot = nowTm.tm_yday * 24 + currentHour;
+  if (rtc_effFetchHour != efficiencyFetchSlot) {
+    if (fetchEfficiency()) {
+      rtc_independence = state.independence;
+      rtc_forecastKwh = state.forecastKwh;
+      rtc_solarKwh = state.solarKwh;
+      rtc_forecastTomorrowKwh = state.forecastTomorrowKwh;
+    }
+    rtc_effFetchHour = efficiencyFetchSlot;
+  }
 
   bool s = fetchState();
   bool p = fetchPrices(currentHour);
