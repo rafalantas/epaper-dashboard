@@ -117,10 +117,10 @@ RTC_DATA_ATTR float rtc_solarKwh          = 0;
 RTC_DATA_ATTR float rtc_forecastTomorrowKwh = -1;
 RTC_DATA_ATTR int   rtc_effFetchHour      = -1;
 RTC_DATA_ATTR bool  rtc_nightUpdateChecked = false;
+RTC_DATA_ATTR bool  rtc_dashboardDrawn    = false;  // na ekranie jest dashboard (nie komunikat)
 
 // ─── Forward declarations ──────────────────────────────────────────────────────
 void drawMsg(const String& l1, const String& l2 = "");
-bool fetchPrices(int currentLocalHour);
 
 void loadDeviceSettings() {
   Preferences prefs;
@@ -353,19 +353,48 @@ void drawPriceMeter(int x, int y, int w, float price, float minP, float maxP) {
 }
 
 // ─── WiFi ─────────────────────────────────────────────────────────────────────
+// Kanal i BSSID routera z poprzedniego polaczenia - pomijamy skanowanie sieci.
+RTC_DATA_ATTR bool    rtc_wifiKnown = false;
+RTC_DATA_ATTR uint8_t rtc_wifiBssid[6];
+RTC_DATA_ATTR int32_t rtc_wifiChannel = 0;
+
+static bool waitForWiFi(int halfSeconds) {
+  for (int i = 0; i < halfSeconds && WiFi.status() != WL_CONNECTED; i++) delay(500);
+  return WiFi.status() == WL_CONNECTED;
+}
+
+static void rememberWiFi() {
+  uint8_t* bssid = WiFi.BSSID();
+  if (bssid == nullptr) return;
+  memcpy(rtc_wifiBssid, bssid, 6);
+  rtc_wifiChannel = WiFi.channel();
+  rtc_wifiKnown = true;
+}
+
 bool connectWiFi() {
   WiFi.mode(WIFI_STA);
   WiFi.setHostname("sloneczny-panel");
+
+  // Szybka sciezka: znany kanal + BSSID (zwykle 1-2 s zamiast 3-6 s).
+  if (rtc_wifiKnown) {
+    WiFi.begin(deviceSettings.wifiSsid.c_str(), deviceSettings.wifiPassword.c_str(),
+               rtc_wifiChannel, rtc_wifiBssid);
+    if (waitForWiFi(10)) { rememberWiFi(); return true; }  // 5 s
+    Serial.println("WiFi: szybkie laczenie nieudane, pelne skanowanie");
+    rtc_wifiKnown = false;  // router mogl zmienic kanal/AP
+    WiFi.disconnect();
+    delay(200);
+  }
+
+  // Zwykle laczenie - pierwsza proba 15 s
   WiFi.begin(deviceSettings.wifiSsid.c_str(), deviceSettings.wifiPassword.c_str());
-  // Pierwsza proba - 15 sekund
-  for (int i = 0; i < 30 && WiFi.status() != WL_CONNECTED; i++) delay(500);
-  if (WiFi.status() == WL_CONNECTED) return true;
+  if (waitForWiFi(30)) { rememberWiFi(); return true; }
   // Druga proba - disconnect i reconnect
   WiFi.disconnect();
   delay(500);
   WiFi.begin(deviceSettings.wifiSsid.c_str(), deviceSettings.wifiPassword.c_str());
-  for (int i = 0; i < 20 && WiFi.status() != WL_CONNECTED; i++) delay(500);
-  return WiFi.status() == WL_CONNECTED;
+  if (waitForWiFi(20)) { rememberWiFi(); return true; }
+  return false;
 }
 
 // ─── HTTP GET ─────────────────────────────────────────────────────────────────
@@ -466,65 +495,123 @@ bool fetchEfficiency() {
   return ok;
 }
 
-// ─── Fetch /api/prices ────────────────────────────────────────────────────────
-bool fetchPrices(int currentLocalHour) {
+// ─── Ceny: pobieranie + cache w RTC ──────────────────────────────────────────
+// Klucz czasu (minuty, UTC) - monotoniczny, do porownywania slotow z "teraz".
+long utcTimeKey(int Y, int Mo, int D, int h, int m) {
+  return (((long)Y * 12 + (Mo - 1)) * 31 + (D - 1)) * 1440L + h * 60 + m;
+}
+
+long nowUtcKey() {
+  time_t t = time(nullptr);
+  struct tm u = {};
+  gmtime_r(&t, &u);
+  return utcTimeKey(u.tm_year + 1900, u.tm_mon + 1, u.tm_mday, u.tm_hour, u.tm_min);
+}
+
+long priceKey[48];  // czas startu kazdego slotu (UTC), rownolegle do prices[]
+
+struct CachedPrice {
+  long    key;
+  float   price;
+  int8_t  hour;
+  uint8_t flags;  // bit0 = tania, bit1 = droga
+};
+RTC_DATA_ATTR CachedPrice rtc_prices[48];
+RTC_DATA_ATTR int         rtc_priceCount = 0;
+RTC_DATA_ATTR int         rtc_priceAttemptSlot = -1;  // ostatnia godzina proby pobrania
+
+void savePricesToRtc() {
+  rtc_priceCount = priceCount;
+  for (int i = 0; i < priceCount; i++) {
+    rtc_prices[i].key   = priceKey[i];
+    rtc_prices[i].price = prices[i].price;
+    rtc_prices[i].hour  = (int8_t)prices[i].hour;
+    rtc_prices[i].flags = (prices[i].isCheap ? 1 : 0) | (prices[i].isExpensive ? 2 : 0);
+  }
+}
+
+void loadPricesFromRtc() {
+  priceCount = min(rtc_priceCount, 48);
+  for (int i = 0; i < priceCount; i++) {
+    priceKey[i]              = rtc_prices[i].key;
+    prices[i].price          = rtc_prices[i].price;
+    prices[i].hour           = rtc_prices[i].hour;
+    prices[i].isCheap        = rtc_prices[i].flags & 1;
+    prices[i].isExpensive    = rtc_prices[i].flags & 2;
+  }
+}
+
+// Biezacy slot = ostatni, ktory zaczal sie nie pozniej niz teraz i nie dawniej niz
+// godzine temu. Porownanie z data chroni przed wczorajszym slotem o tej samej godzinie.
+void selectCurrentPrice() {
+  const long nowKey = nowUtcKey();
+  currentPriceIdx = -1;
+  for (int i = 0; i < priceCount; i++) {
+    if (priceKey[i] <= nowKey && nowKey - priceKey[i] < 60) currentPriceIdx = i;
+  }
+  Serial.printf("Prices: %d slots, idx=%d, offset=%ldh
+",
+    priceCount, currentPriceIdx, g_utcOffsetSec/3600);
+}
+
+// Pobiera /api/prices i zapisuje do prices[] + RTC. Bledy tylko w logu -
+// nie nadpisujemy dashboardu na e-papierze.
+bool fetchPricesFromApi() {
   String body = httpGet(deviceSettings.apiHost + "/api/prices");
-  // Jedna ponowna proba jesli pusta odpowiedz
-  if (body.isEmpty()) {
+  if (body.isEmpty()) {  // jedna ponowna proba
     delay(2000);
     body = httpGet(deviceSettings.apiHost + "/api/prices");
   }
-  if (body.isEmpty()) {
-    drawMsg("prices: brak odpowiedzi", deviceSettings.apiHost);
-    delay(3000); return false;
-  }
+  if (body.isEmpty()) { Serial.println("prices: brak odpowiedzi"); return false; }
   DynamicJsonDocument doc(10240);
   if (deserializeJson(doc, body) != DeserializationError::Ok) {
-    drawMsg("prices: JSON error"); delay(3000); return false;
+    Serial.println("prices: JSON error");
+    return false;
   }
   JsonArray arr = doc["prices"].as<JsonArray>();
-  if (arr.isNull()) { drawMsg("prices: brak tablicy"); delay(3000); return false; }
+  if (arr.isNull()) { Serial.println("prices: brak tablicy"); return false; }
 
-  priceCount = 0; currentPriceIdx = -1;
-
+  int n = 0;
   for (JsonObject slot : arr) {
-    if (priceCount >= 48) break;
+    if (n >= 48) break;
     if (slot["price"].isNull()) continue;
-    float price = slot["price"] | 0.0f;
-
-    prices[priceCount].price       = price;
-    prices[priceCount].isCheap     = slot["isCheap"]     | false;
-    prices[priceCount].isExpensive = slot["isExpensive"] | false;
+    prices[n].price       = slot["price"] | 0.0f;
+    prices[n].isCheap     = slot["isCheap"]     | false;
+    prices[n].isExpensive = slot["isExpensive"] | false;
 
     String startStr = slot["start"].as<String>();
-    String endStr   = slot["end"].as<String>();
     int Y=0,Mo=0,D=0,h=0,m=0,s=0;
     sscanf(startStr.c_str(), "%d-%d-%dT%d:%d:%d", &Y,&Mo,&D,&h,&m,&s);
     int localHour = (h + (int)(g_utcOffsetSec / 3600)) % 24;
     if (localHour < 0) localHour += 24;
-    prices[priceCount].hour = localHour;
-
-    // Porownaj godziny bezposrednio - bez mktime, bez time_t
-    // localHour juz jest przeliczony na czas lokalny (+2h)
-    // Aktualny czas lokalny mamy z NTP
-    // Slot jest aktualny jesli localHour == aktualnaGodzinaLokalna
-    // (i data sie zgadza - bierzemy pierwszy pasujacy slot)
-    if (localHour == currentLocalHour && currentPriceIdx < 0) {
-      currentPriceIdx = priceCount;
-    }
-
-    priceCount++;
+    prices[n].hour = localHour;
+    priceKey[n] = utcTimeKey(Y, Mo, D, h, m);
+    n++;
   }
-  Serial.printf("Prices: %d slots, idx=%d, offset=%ldh\n",
-    priceCount, currentPriceIdx, g_utcOffsetSec/3600);
-  // Debug: wypisz kilka slotow wokol aktualnego
-  int dbgStart = max(0, currentPriceIdx - 2);
-  int dbgEnd   = min(priceCount-1, currentPriceIdx + 2);
-  for (int i = dbgStart; i <= dbgEnd; i++) {
-    Serial.printf("  [%d] hour=%02d price=%.2f cheap=%d exp=%d %s\n",
-      i, prices[i].hour, prices[i].price,
-      prices[i].isCheap, prices[i].isExpensive,
-      i == currentPriceIdx ? "<-- CURRENT" : "");
+  if (n == 0) return false;
+  priceCount = n;
+  savePricesToRtc();
+  return true;
+}
+
+// Ceny zmieniaja sie raz na dobe (jutrzejsze ok. 13:00), wiec cache w RTC wystarcza.
+// Pobieramy gdy: cache pusty/nieaktualny, albo pokrywa mniej niz 12 h do przodu
+// (czekamy na jutrzejsze) - ale nie czesciej niz raz na godzine.
+bool loadPrices(int currentLocalHour, int yday) {
+  loadPricesFromRtc();
+  selectCurrentPrice();
+
+  const long nowKey = nowUtcKey();
+  const long lastKey = priceCount > 0 ? priceKey[priceCount - 1] : 0;
+  const bool needFetch = currentPriceIdx < 0 || (lastKey - nowKey) < 12 * 60;
+  const int attemptSlot = yday * 24 + currentLocalHour;
+
+  if (needFetch && rtc_priceAttemptSlot != attemptSlot) {
+    rtc_priceAttemptSlot = attemptSlot;
+    if (fetchPricesFromApi()) selectCurrentPrice();
+    else if (currentPriceIdx < 0) priceCount = 0;  // cache bezuzyteczny
+  } else if (needFetch) {
+    Serial.println("Prices: uzywam cache (kolejna proba za godzine)");
   }
   return priceCount > 0;
 }
@@ -551,13 +638,13 @@ String getRecommendation(String& desc) {
   bool  pvSurplus = (load >= 0 && pv > load + 200);
   bool  pvGood    = (pv > 1000);
 
-  if (cheap && pvGood)       { desc = "Tania cena + duze PV";      return "UZYWAJ TERAZ"; }
-  if (cheap && soc > 50)     { desc = "Tania cena + bateria OK";   return "UZYWAJ TERAZ"; }
-  if (cheap)                 { desc = "Tania cena";                return "UZYWAJ TERAZ"; }
+  if (cheap) {
+    desc = pvGood ? "Tania cena + duze PV" : (soc > 50 ? "Tania cena + bateria OK" : "Tania cena");
+    return "UZYWAJ TERAZ";
+  }
   if (pvGood && pvSurplus)   { desc = "Duze PV pokrywa koszty";    return "UZYWAJ TERAZ"; }
   if (pvGood && normal)      { desc = "Duze PV, cena normalna";    return "UZYWAJ TERAZ"; }
   if (expensive && pvGood)   { desc = "PV ratuje - droga cena";    return "UZYWAJ Z GLOWA"; }
-  if (expensive && pvGood)   { desc = "PV chroni przed wysoka cena"; return "UZYWAJ Z GLOWA"; }
   if (expensive)             { desc = "Drogo - ogranicz zuzycie";  return "OSZCZEDZAJ"; }
   if (nextCheap)             { desc = "Wkrotce bedzie taniej";     return "POCZEKAJ"; }
   if (pvSurplus)             { desc = "Nadwyzka PV";               return "UZYWAJ TERAZ"; }
@@ -947,7 +1034,8 @@ void drawMsg(const String& l1, const String& l2) {
 void setup() {
   Serial.begin(115200);
   rtc_bootCount++;
-  delay(3000);  // okno serwisowe na Upload
+  // Okno serwisowe na Upload tylko po zasilaniu/resecie, nie po kazdym budzeniu ze snu.
+  if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_UNDEFINED) delay(3000);
 
   epd.begin();
   loadDeviceSettings();
@@ -966,7 +1054,10 @@ void setup() {
   state.forecastTomorrowKwh = rtc_forecastTomorrowKwh;
 
   if (!connectWiFi()) {
-    drawMsg("Brak WiFi!", "Spi 5 min...");
+    // Nie nadpisuj dashboardu - e-papier trzyma ostatni obraz.
+    if (!rtc_dashboardDrawn) {
+      drawMsg("Brak WiFi!", "Spi " + String(deviceSettings.sleepSeconds / 60) + " min...");
+    }
     WiFi.disconnect(true); WiFi.mode(WIFI_OFF);
     esp_deep_sleep((uint64_t)deviceSettings.sleepSeconds * 1000000ULL);
     return;
@@ -996,7 +1087,7 @@ void setup() {
 
   // Prognoza i statystyki zmieniają się wolno; pobieraj je najwyżej raz na godzinę.
   const int efficiencyFetchSlot = nowTm.tm_yday * 24 + currentHour;
-  if (rtc_effFetchHour != efficiencyFetchSlot) {
+  if (!isNightHours(currentHour) && rtc_effFetchHour != efficiencyFetchSlot) {
     if (fetchEfficiency()) {
       rtc_independence = state.independence;
       rtc_forecastKwh = state.forecastKwh;
@@ -1006,19 +1097,27 @@ void setup() {
     rtc_effFetchHour = efficiencyFetchSlot;
   }
 
-  bool s = fetchState();
-  bool p = fetchPrices(currentHour);
-
   const bool nightMode = isNightHours(nowTm.tm_hour);
   const unsigned long sleepSec = calcSleepSeconds(nowTm.tm_hour, nowTm.tm_min);
 
-  if (s && p) {
-    drawScreen();
-  } else {
-    drawMsg("Blad pobierania!", !s ? "/api/state" : "/api/prices");
+  // W nocy nie pobieramy danych ani nie rysujemy dashboardu - tylko "Dobranoc".
+  if (!nightMode) {
+    bool s = fetchState();
+    bool p = loadPrices(currentHour, nowTm.tm_yday);
+    if (s && p) {
+      drawScreen();
+      rtc_dashboardDrawn = true;
+    } else if (!rtc_dashboardDrawn) {
+      // Brak poprzedniego dashboardu na ekranie - pokaz blad. W innym wypadku
+      // zostaje ostatni obraz (e-papier go trzyma).
+      drawMsg("Blad pobierania!", !s ? "/api/state" : "/api/prices");
+    } else {
+      Serial.printf("Fetch failed (state=%d prices=%d) - zostawiam poprzedni obraz\n", s, p);
+    }
   }
 
   if (nightMode) {
+    rtc_dashboardDrawn = false;
     epd.fillScreen(TFT_WHITE);
     epd.setTextColor(TFT_BLACK, TFT_WHITE);
     epd.setTextSize(2); epd.setCursor(20, 20); epd.print("Dobranoc :)");
