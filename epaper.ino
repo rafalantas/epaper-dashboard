@@ -549,8 +549,7 @@ void selectCurrentPrice() {
   for (int i = 0; i < priceCount; i++) {
     if (priceKey[i] <= nowKey && nowKey - priceKey[i] < 60) currentPriceIdx = i;
   }
-  Serial.printf("Prices: %d slots, idx=%d, offset=%ldh
-",
+  Serial.printf("Prices: %d slots, idx=%d, offset=%ldh\n",
     priceCount, currentPriceIdx, g_utcOffsetSec/3600);
 }
 
