@@ -1029,6 +1029,55 @@ void drawMsg(const String& l1, const String& l2) {
   epd.update();
 }
 
+// ─── Ekran nocny ──────────────────────────────────────────────────────────────
+void drawStar(int x, int y, int r) {
+  epd.drawLine(x - r, y, x + r, y, TFT_BLACK);
+  epd.drawLine(x, y - r, x, y + r, TFT_BLACK);
+  int d = r / 2;
+  if (d > 0) {
+    epd.drawLine(x - d, y - d, x + d, y + d, TFT_BLACK);
+    epd.drawLine(x - d, y + d, x + d, y - d, TFT_BLACK);
+  }
+}
+
+void drawCenteredText(const String& text, int y, int size) {
+  int w = text.length() * 6 * size;
+  epd.setTextSize(size);
+  epd.setCursor(max(0, (800 - w) / 2), y);
+  epd.print(text);
+}
+
+void drawNightScreen(const struct tm& nowTm) {
+  epd.fillScreen(TFT_WHITE);
+  epd.setTextColor(TFT_BLACK, TFT_WHITE);
+
+  // Ksiezyc: czarne kolo przyciete bialym kolem z przesunieciem = sierp.
+  epd.fillCircle(400, 150, 80, TFT_BLACK);
+  epd.fillCircle(432, 128, 68, TFT_WHITE);
+
+  // Gwiazdki dookola ksiezyca.
+  drawStar(250,  70, 10);
+  drawStar(180, 180,  6);
+  drawStar(300, 240,  4);
+  drawStar(560,  60,  6);
+  drawStar(620, 170, 10);
+  drawStar(540, 250,  4);
+  drawStar(120,  90,  4);
+  drawStar(690, 100,  4);
+  drawStar(700, 240,  6);
+
+  // "Zzz" przy ksiezycu.
+  epd.setTextSize(3); epd.setCursor(490, 130); epd.print("z");
+  epd.setTextSize(2); epd.setCursor(520, 108); epd.print("z");
+  epd.setTextSize(1); epd.setCursor(540, 92);  epd.print("z");
+
+  drawCenteredText("Dobranoc", 300, 6);
+  drawCenteredText("Nastepne odswiezenie o " + String(deviceSettings.nightHourEnd) + ":00", 372, 2);
+  char tb[24]; strftime(tb, sizeof(tb), "%H:%M  %d.%m.%Y", &nowTm);
+  drawCenteredText(tb, 410, 1);
+  epd.update();
+}
+
 // ─── Setup ────────────────────────────────────────────────────────────────────
 void setup() {
   Serial.begin(115200);
@@ -1117,14 +1166,7 @@ void setup() {
 
   if (nightMode) {
     rtc_dashboardDrawn = false;
-    epd.fillScreen(TFT_WHITE);
-    epd.setTextColor(TFT_BLACK, TFT_WHITE);
-    epd.setTextSize(2); epd.setCursor(20, 20); epd.print("Dobranoc :)");
-    epd.setTextSize(1); epd.setCursor(20, 60);
-    epd.print("Nastepne odswiezenie o " + String(deviceSettings.nightHourEnd) + ":00");
-    char tb[20]; strftime(tb, sizeof(tb), "%H:%M  %d.%m.%Y", &nowTm);
-    epd.setCursor(20, 80); epd.print(tb);
-    epd.update();
+    drawNightScreen(nowTm);
   }
 
   bool otaUpdated = false;
