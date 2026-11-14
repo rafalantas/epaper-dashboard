@@ -17,6 +17,7 @@ The display driver is selected in [`driver.h`](driver.h).
 - Arduino IDE with the ESP32 board support package installed
 - Seeed GFX library and its XIAO ePaper driver support
 - ArduinoJson library
+- Adafruit MAX1704X library (optional hardware: MAX17048 battery gauge on I2C, D4 = SDA, D5 = SCL)
 - The TFT_eSPI-compatible display interface supplied by the selected Seeed GFX setup
 
 The release build uses ESP32 board support package 3.0.7, Seeed_GFX 3.1.0 and ArduinoJson 6.21.5. Use those versions for a matching manual build. Follow Seeed's setup instructions for the display library and board configuration.
@@ -67,3 +68,7 @@ For this first USB upload, use your private `config.h`. The device saves Wi-Fi, 
 ## Settings
 
 The local configuration file controls Wi-Fi and API connection details, the normal sleep interval, quiet hours and the peak PV power used to scale display bars. `config.example.h` documents the available settings and safe example values.
+
+## Display battery gauge
+
+If an Adafruit MAX17048 (5580) is connected between the battery and the driver board BAT connector, with SDA on D4, SCL on D5, VIN on 3V3 and GND on GND, the footer shows the display battery level and voltage. Below 15% a warning badge appears; below 10% the refresh interval grows to at least 30 minutes. Without the gauge the firmware runs as before. Defaults can be overridden in `config.h` with `BATTERY_LOW_PCT`, `BATTERY_SAVE_PCT` and `BATTERY_SAVE_SLEEP_SECONDS`.

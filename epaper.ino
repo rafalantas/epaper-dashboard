@@ -15,6 +15,7 @@ using fs::FS;
 #include <ArduinoJson.h>
 #include <Preferences.h>
 #include <time.h>
+#include <Adafruit_MAX1704X.h>
 #include "ota_update.h"
 
 // ─── Konfiguracja — edytuj config.h ──────────────────────────────────────────
@@ -51,6 +52,10 @@ struct State {
   int   chgRemTime  = 0;
   int   dsgRemTime  = 0;
   bool  connected   = false;
+  // Bateria samego ekranu (MAX17048 na I2C: D4=SDA, D5=SCL). -1 = brak miernika.
+  float devBatPct   = -1;
+  float devBatV     = 0;
+  float devBatRate  = 0;   // %/h, dodatnie = ladowanie
 };
 
 struct PriceSlot {
@@ -110,6 +115,50 @@ DeviceSettings deviceSettings;
 String latestGithubVersion;
 
 EPaper epd;
+
+// ─── Bateria ekranu (MAX17048) ────────────────────────────────────────────────
+#ifndef BATTERY_LOW_PCT
+#define BATTERY_LOW_PCT 15      // ponizej: ostrzezenie na ekranie
+#endif
+#ifndef BATTERY_SAVE_PCT
+#define BATTERY_SAVE_PCT 10     // ponizej: rzadsze odswiezanie
+#endif
+#ifndef BATTERY_SAVE_SLEEP_SECONDS
+#define BATTERY_SAVE_SLEEP_SECONDS 1800
+#endif
+
+Adafruit_MAX17048 maxLipo;
+bool maxPresent = false;
+
+// Odczyt zaraz po wybudzeniu, przed wlaczeniem Wi-Fi (napiecie bez obciazenia radiem).
+void readDeviceBattery(bool firstBoot) {
+  if (!maxLipo.begin()) {
+    Serial.println("MAX17048: nie wykryto");
+    return;
+  }
+  maxPresent = true;
+  maxLipo.wake();
+  if (firstBoot) maxLipo.quickStart();  // pierwsze oszacowanie po podlaczeniu zasilania
+  delay(200);
+  float v = maxLipo.cellVoltage();
+  float pct = maxLipo.cellPercent();
+  if (isnan(v) || isnan(pct)) {
+    Serial.println("MAX17048: bledny odczyt");
+    return;
+  }
+  state.devBatV = v;
+  state.devBatPct = max(0.0f, min(100.0f, pct));
+  float rate = maxLipo.chargeRate();
+  state.devBatRate = isnan(rate) ? 0.0f : rate;
+  Serial.printf("Bateria ekranu: %.0f%% %.2fV %.1f%%/h\n",
+    state.devBatPct, state.devBatV, state.devBatRate);
+}
+
+// Uspienie z miernikiem w hibernacji (ok. 3 uA zamiast ok. 23 uA).
+void goToSleep(uint64_t seconds) {
+  if (maxPresent) maxLipo.hibernate();
+  esp_deep_sleep(seconds * 1000000ULL);
+}
 RTC_DATA_ATTR int   rtc_bootCount        = 0;
 RTC_DATA_ATTR float rtc_independence      = 0;
 RTC_DATA_ATTR float rtc_forecastKwh       = 0;
@@ -1017,6 +1066,22 @@ void drawScreen() {
   epd.print("  GitHub: ");
   epd.print(latestGithubVersion.isEmpty() ? "sprawdzanie nocne" : "v" + latestGithubVersion);
 
+  // Bateria ekranu: ikona z wypelnieniem + procent i napiecie.
+  if (state.devBatPct >= 0) {
+    const int bx = 600, by = 450;
+    epd.drawRect(bx, by, 26, 12, TFT_BLACK);
+    epd.fillRect(bx + 26, by + 3, 3, 6, TFT_BLACK);
+    int fill = (int)(22.0f * state.devBatPct / 100.0f);
+    if (fill > 0) epd.fillRect(bx + 2, by + 2, fill, 8, TFT_BLACK);
+    char bl[28];
+    snprintf(bl, sizeof(bl), "Ekran: %.0f%% %.2fV%s", state.devBatPct, state.devBatV,
+             state.devBatRate > 1.0f ? " lad." : "");
+    epd.setTextSize(1); epd.setCursor(bx + 36, 452); epd.print(bl);
+    if (state.devBatPct <= BATTERY_LOW_PCT) {
+      drawBadge(600, 466, 190, 12, "NISKA BATERIA EKRANU!", true);
+    }
+  }
+
   epd.update();
 }
 
@@ -1101,13 +1166,20 @@ void setup() {
   state.solarKwh     = rtc_solarKwh;
   state.forecastTomorrowKwh = rtc_forecastTomorrowKwh;
 
+  // Bateria ekranu - przed Wi-Fi, zeby odczyt nie byl zanizony przez obciazenie radiem.
+  readDeviceBattery(rtc_bootCount == 1);
+  const bool batterySaving = state.devBatPct >= 0 && state.devBatPct <= BATTERY_SAVE_PCT;
+  const uint64_t normalSleep = batterySaving
+    ? max((uint32_t)BATTERY_SAVE_SLEEP_SECONDS, deviceSettings.sleepSeconds)
+    : deviceSettings.sleepSeconds;
+
   if (!connectWiFi()) {
     // Nie nadpisuj dashboardu - e-papier trzyma ostatni obraz.
     if (!rtc_dashboardDrawn) {
-      drawMsg("Brak WiFi!", "Spi " + String(deviceSettings.sleepSeconds / 60) + " min...");
+      drawMsg("Brak WiFi!", "Spi " + String((uint32_t)(normalSleep / 60)) + " min...");
     }
     WiFi.disconnect(true); WiFi.mode(WIFI_OFF);
-    esp_deep_sleep((uint64_t)deviceSettings.sleepSeconds * 1000000ULL);
+    goToSleep(normalSleep);
     return;
   }
 
@@ -1121,7 +1193,7 @@ void setup() {
     }
     if (tmp.tm_year <= 100) {
       WiFi.disconnect(true); WiFi.mode(WIFI_OFF);
-      esp_deep_sleep((uint64_t)deviceSettings.sleepSeconds * 1000000ULL);
+      goToSleep(normalSleep);
       return;
     }
   }
@@ -1146,7 +1218,8 @@ void setup() {
   }
 
   const bool nightMode = isNightHours(nowTm.tm_hour);
-  const unsigned long sleepSec = calcSleepSeconds(nowTm.tm_hour, nowTm.tm_min);
+  unsigned long sleepSec = calcSleepSeconds(nowTm.tm_hour, nowTm.tm_min);
+  if (batterySaving && !nightMode) sleepSec = max((unsigned long)normalSleep, sleepSec);
 
   // W nocy nie pobieramy danych ani nie rysujemy dashboardu - tylko "Dobranoc".
   if (!nightMode) {
@@ -1197,7 +1270,7 @@ void setup() {
   }
 
   Serial.printf("Sleep %lus. Boot #%d\n", sleepSec, rtc_bootCount);
-  esp_deep_sleep((uint64_t)sleepSec * 1000000ULL);
+  goToSleep(sleepSec);
 }
 
 void loop() {}
