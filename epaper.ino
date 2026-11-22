@@ -11,6 +11,7 @@ namespace fs { class FS; }
 using fs::FS;
 
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include <Preferences.h>
@@ -64,6 +65,23 @@ struct PriceSlot {
   bool  isCheap    = false;
   bool  isExpensive= false;
 };
+
+// Outdoor weather cached in RTC memory so the last valid reading survives deep sleep.
+#ifndef WEATHER_LATITUDE
+#define WEATHER_LATITUDE 52.74f
+#endif
+#ifndef WEATHER_LONGITUDE
+#define WEATHER_LONGITUDE 23.58f
+#endif
+#ifndef WEATHER_REFRESH_SECONDS
+#define WEATHER_REFRESH_SECONDS 900
+#endif
+RTC_DATA_ATTR float rtc_weatherTemp = -999.0f;
+RTC_DATA_ATTR float rtc_weatherFeels = -999.0f;
+RTC_DATA_ATTR float rtc_weatherWind = -999.0f;
+RTC_DATA_ATTR int   rtc_weatherCode = -1;
+RTC_DATA_ATTR bool  rtc_weatherValid = false;
+RTC_DATA_ATTR time_t rtc_weatherLastFetch = 0;
 
 // ─── Globalne ─────────────────────────────────────────────────────────────────
 State     state;
@@ -455,6 +473,89 @@ String httpGet(const String& url) {
   if (http.GET() == HTTP_CODE_OK) body = http.getString();
   http.end();
   return body;
+}
+
+// Open-Meteo has no API key. TLS certificate validation is intentionally
+// disabled only for this public, read-only weather request (no credentials sent).
+bool fetchWeather() {
+  WiFiClientSecure client;
+  client.setInsecure();
+  HTTPClient http;
+  http.setTimeout(8000);
+  String url = String("https://api.open-meteo.com/v1/forecast?latitude=") +
+    String(WEATHER_LATITUDE, 4) + "&longitude=" + String(WEATHER_LONGITUDE, 4) +
+    "&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m&timezone=auto";
+  if (!http.begin(client, url)) return false;
+  int status = http.GET();
+  if (status != HTTP_CODE_OK) {
+    Serial.printf("Open-Meteo HTTP error: %d\\n", status);
+    http.end();
+    return false;
+  }
+  StaticJsonDocument<768> doc;
+  DeserializationError err = deserializeJson(doc, http.getStream());
+  http.end();
+  if (err) {
+    Serial.printf("Open-Meteo JSON error: %s\\n", err.c_str());
+    return false;
+  }
+  JsonObject current = doc["current"];
+  float temp = current["temperature_2m"] | -999.0f;
+  float feels = current["apparent_temperature"] | -999.0f;
+  float wind = current["wind_speed_10m"] | -999.0f;
+  int code = current["weather_code"] | -1;
+  if (temp < -100.0f || temp > 70.0f || feels < -100.0f || wind < 0.0f || code < 0) return false;
+  rtc_weatherTemp = temp;
+  rtc_weatherFeels = feels;
+  rtc_weatherWind = wind;
+  rtc_weatherCode = code;
+  rtc_weatherValid = true;
+  rtc_weatherLastFetch = time(nullptr);
+  Serial.printf("Open-Meteo: %.1fC odcz. %.1fC wiatr %.0f km/h kod %d\\n", temp, feels, wind, code);
+  return true;
+}
+
+// Compact monochrome weather pictograms sized for the existing 800x480 footer.
+void drawWeatherIcon(int x, int y, int code) {
+  const bool clear = code == 0;
+  const bool partly = code == 1 || code == 2;
+  const bool fog = code == 45 || code == 48;
+  const bool drizzle = code == 51 || code == 53 || code == 55 || code == 56 || code == 57;
+  const bool rain = code == 61 || code == 63 || code == 65 || code == 66 || code == 67 || code == 80 || code == 81 || code == 82;
+  const bool snow = code == 71 || code == 73 || code == 75 || code == 77 || code == 85 || code == 86;
+  const bool storm = code == 95 || code == 96 || code == 99;
+  if (clear || partly) {
+    epd.drawCircle(x + 17, y + 7, 5, TFT_BLACK);
+    epd.drawLine(x + 17, y, x + 17, y - 3, TFT_BLACK);
+    epd.drawLine(x + 17, y + 14, x + 17, y + 17, TFT_BLACK);
+    epd.drawLine(x + 10, y + 7, x + 7, y + 7, TFT_BLACK);
+    epd.drawLine(x + 24, y + 7, x + 27, y + 7, TFT_BLACK);
+    if (clear) return;
+  }
+  if (fog) {
+    epd.drawLine(x + 2, y + 7, x + 25, y + 7, TFT_BLACK);
+    epd.drawLine(x, y + 12, x + 22, y + 12, TFT_BLACK);
+    epd.drawLine(x + 3, y + 17, x + 25, y + 17, TFT_BLACK);
+    return;
+  }
+  epd.drawCircle(x + 8, y + 14, 5, TFT_BLACK);
+  epd.drawCircle(x + 15, y + 10, 7, TFT_BLACK);
+  epd.drawCircle(x + 22, y + 14, 5, TFT_BLACK);
+  epd.drawLine(x + 4, y + 19, x + 26, y + 19, TFT_BLACK);
+  if (storm) {
+    epd.drawLine(x + 15, y + 19, x + 11, y + 25, TFT_BLACK);
+    epd.drawLine(x + 11, y + 25, x + 17, y + 25, TFT_BLACK);
+    epd.drawLine(x + 17, y + 25, x + 13, y + 30, TFT_BLACK);
+  } else if (snow) {
+    epd.drawLine(x + 9, y + 22, x + 9, y + 28, TFT_BLACK);
+    epd.drawLine(x + 6, y + 25, x + 12, y + 25, TFT_BLACK);
+    epd.drawLine(x + 19, y + 22, x + 19, y + 28, TFT_BLACK);
+    epd.drawLine(x + 16, y + 25, x + 22, y + 25, TFT_BLACK);
+  } else if (rain || drizzle) {
+    epd.drawLine(x + 8, y + 22, x + 5, y + 27, TFT_BLACK);
+    epd.drawLine(x + 17, y + 22, x + 14, y + 27, TFT_BLACK);
+    if (rain) epd.drawLine(x + 24, y + 22, x + 21, y + 27, TFT_BLACK);
+  }
 }
 
 // ─── Fetch /api/state ─────────────────────────────────────────────────────────
@@ -1051,8 +1152,10 @@ void drawScreen() {
     epd.setCursor(650, 401); epd.print(tb);
   }
 
-  // ── Stopka ────────────────────────────────────────────────────────────────
+  // ── Stopka: lewa (czas/firmware), srodek (pogoda), prawa (status/bateria) ──
   epd.fillRect(10, 423, 780, 2, TFT_BLACK);
+  epd.drawLine(340, 428, 340, 460, TFT_BLACK);
+  epd.drawLine(525, 428, 525, 460, TFT_BLACK);
   time_t now2 = time(nullptr);
   struct tm ti2 = {};
   localtime_r(&now2, &ti2);
@@ -1060,11 +1163,28 @@ void drawScreen() {
   strftime(timeBuf, sizeof(timeBuf), "%H:%M  %d.%m.%Y", &ti2);
   epd.setTextSize(1);
   epd.setCursor(16, 436); epd.print("Akt.: "); epd.print(timeBuf);
-  epd.setCursor(520, 436); epd.print("budzenie #"); epd.print(rtc_bootCount);
-  epd.setCursor(680, 436); epd.print(state.connected ? "EcoFlow: OK" : "EcoFlow: brak");
   epd.setCursor(16, 452); epd.print("Firmware: v"); epd.print(FIRMWARE_VERSION);
   epd.print("  GitHub: ");
   epd.print(latestGithubVersion.isEmpty() ? "sprawdzanie nocne" : "v" + latestGithubVersion);
+
+  // Pogoda: zachowuje ostatni poprawny odczyt z RTC, gdy API chwilowo nie odpowiada.
+  if (rtc_weatherValid) {
+    drawWeatherIcon(348, 432, rtc_weatherCode);
+    char tempBuf[16], feelsBuf[20], windBuf[20];
+    snprintf(tempBuf, sizeof(tempBuf), "%.1fC", rtc_weatherTemp);
+    snprintf(feelsBuf, sizeof(feelsBuf), "odcz. %.0fC", rtc_weatherFeels);
+    snprintf(windBuf, sizeof(windBuf), "wiatr %.0f km/h", rtc_weatherWind);
+    epd.setTextSize(2); epd.setCursor(380, 435); epd.print(tempBuf);
+    epd.setTextSize(1); epd.setCursor(380, 452); epd.print(feelsBuf);
+    epd.setCursor(448, 452); epd.print(windBuf);
+  } else {
+    epd.setTextSize(1); epd.setCursor(380, 444); epd.print("Pogoda: --");
+  }
+
+  // Prawa czesc pozostaje z dotychczasowymi informacjami EcoFlow i baterii.
+  epd.setTextSize(1);
+  epd.setCursor(540, 436); epd.print("budzenie #"); epd.print(rtc_bootCount);
+  epd.setCursor(680, 436); epd.print(state.connected ? "EcoFlow: OK" : "EcoFlow: brak");
 
   // Bateria ekranu: ikona z wypelnieniem + procent i napiecie.
   if (state.devBatPct >= 0) {
@@ -1220,6 +1340,11 @@ void setup() {
   const bool nightMode = isNightHours(nowTm.tm_hour);
   unsigned long sleepSec = calcSleepSeconds(nowTm.tm_hour, nowTm.tm_min);
   if (batterySaving && !nightMode) sleepSec = max((unsigned long)normalSleep, sleepSec);
+
+  // Pogoda jest odswiezana najwyzej co 15 minut; ostatni pomiar pozostaje w RTC cache.
+  if (!nightMode && (!rtc_weatherValid || now - rtc_weatherLastFetch >= WEATHER_REFRESH_SECONDS)) {
+    fetchWeather();
+  }
 
   // W nocy nie pobieramy danych ani nie rysujemy dashboardu - tylko "Dobranoc".
   if (!nightMode) {
