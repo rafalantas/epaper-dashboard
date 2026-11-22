@@ -72,3 +72,7 @@ The local configuration file controls Wi-Fi and API connection details, the norm
 ## Display battery gauge
 
 If an Adafruit MAX17048 (5580) is connected between the battery and the driver board BAT connector, with SDA on D4, SCL on D5, VIN on 3V3 and GND on GND, the footer shows the display battery level and voltage. Below 15% a warning badge appears; below 10% the refresh interval grows to at least 30 minutes. Without the gauge the firmware runs as before. Defaults can be overridden in `config.h` with `BATTERY_LOW_PCT`, `BATTERY_SAVE_PCT` and `BATTERY_SAVE_SLEEP_SECONDS`.
+
+## Outdoor weather footer
+
+The display fetches current outdoor conditions from [Open-Meteo](https://open-meteo.com/) without an API key. The footer shows temperature, apparent temperature and wind speed with a compact monochrome icon based on the WMO weather code. Weather is refreshed at most every 15 minutes during daytime wake cycles; the last successful reading is retained in RTC memory across deep sleep and remains visible if a later request fails. Set `WEATHER_LATITUDE` and `WEATHER_LONGITUDE` in `config.h` to adjust the location (the example defaults target the Nowokornino / Hajnówka area). `WEATHER_REFRESH_SECONDS` controls the refresh interval.
