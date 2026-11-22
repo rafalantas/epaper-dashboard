@@ -488,7 +488,7 @@ bool fetchWeather() {
   if (!http.begin(client, url)) return false;
   int status = http.GET();
   if (status != HTTP_CODE_OK) {
-    Serial.printf("Open-Meteo HTTP error: %d\\n", status);
+    Serial.printf("Open-Meteo HTTP error: %d\n", status);
     http.end();
     return false;
   }
@@ -496,7 +496,7 @@ bool fetchWeather() {
   DeserializationError err = deserializeJson(doc, http.getStream());
   http.end();
   if (err) {
-    Serial.printf("Open-Meteo JSON error: %s\\n", err.c_str());
+    Serial.printf("Open-Meteo JSON error: %s\n", err.c_str());
     return false;
   }
   JsonObject current = doc["current"];
@@ -511,7 +511,7 @@ bool fetchWeather() {
   rtc_weatherCode = code;
   rtc_weatherValid = true;
   rtc_weatherLastFetch = time(nullptr);
-  Serial.printf("Open-Meteo: %.1fC odcz. %.1fC wiatr %.0f km/h kod %d\\n", temp, feels, wind, code);
+  Serial.printf("Open-Meteo: %.1fC odcz. %.1fC wiatr %.0f km/h kod %d\n", temp, feels, wind, code);
   return true;
 }
 
