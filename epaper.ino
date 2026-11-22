@@ -1176,7 +1176,7 @@ void drawScreen() {
     snprintf(windBuf, sizeof(windBuf), "wiatr %.0f km/h", rtc_weatherWind);
     epd.setTextSize(2); epd.setCursor(380, 435); epd.print(tempBuf);
     epd.setTextSize(1); epd.setCursor(380, 452); epd.print(feelsBuf);
-    epd.setCursor(448, 452); epd.print(windBuf);
+    epd.setCursor(444, 452); epd.print(windBuf);
   } else {
     epd.setTextSize(1); epd.setCursor(380, 444); epd.print("Pogoda: --");
   }
