@@ -68,13 +68,13 @@ struct PriceSlot {
 
 // Outdoor weather cached in RTC memory so the last valid reading survives deep sleep.
 #ifndef WEATHER_LATITUDE
-#define WEATHER_LATITUDE 52.74f
+#define WEATHER_LATITUDE 52.743280f
 #endif
 #ifndef WEATHER_LONGITUDE
-#define WEATHER_LONGITUDE 23.58f
+#define WEATHER_LONGITUDE 23.581220f
 #endif
 #ifndef WEATHER_REFRESH_SECONDS
-#define WEATHER_REFRESH_SECONDS 900
+#define WEATHER_REFRESH_SECONDS 3600
 #endif
 RTC_DATA_ATTR float rtc_weatherTemp = -999.0f;
 RTC_DATA_ATTR float rtc_weatherFeels = -999.0f;
@@ -1341,7 +1341,7 @@ void setup() {
   unsigned long sleepSec = calcSleepSeconds(nowTm.tm_hour, nowTm.tm_min);
   if (batterySaving && !nightMode) sleepSec = max((unsigned long)normalSleep, sleepSec);
 
-  // Pogoda jest odswiezana najwyzej co 15 minut; ostatni pomiar pozostaje w RTC cache.
+  // Pogoda jest odswiezana najwyzej co 60 minut; ostatni pomiar pozostaje w RTC cache.
   if (!nightMode && (!rtc_weatherValid || now - rtc_weatherLastFetch >= WEATHER_REFRESH_SECONDS)) {
     fetchWeather();
   }
