@@ -19,10 +19,10 @@
 // Peak PV power in watts, used to scale production bars
 #define PV_MAX_W       1000.0f
 
-// Outdoor weather location (default: Nowokornino / Hajnówka area)
-#define WEATHER_LATITUDE       52.74f
-#define WEATHER_LONGITUDE      23.58f
-#define WEATHER_REFRESH_SECONDS 900
+// Outdoor weather location (default: Hajnówka, Targowa / Bielska area)
+#define WEATHER_LATITUDE       52.743280f
+#define WEATHER_LONGITUDE      23.581220f
+#define WEATHER_REFRESH_SECONDS 3600
 
 // Set a new unique value and upload once over USB to replace saved settings.
 #define SETTINGS_RESET_TOKEN ""
