@@ -16,6 +16,7 @@ using fs::FS;
 #include <ArduinoJson.h>
 #include <Preferences.h>
 #include <time.h>
+#include <esp_timer.h>
 #include <Adafruit_MAX1704X.h>
 #include "ota_update.h"
 
@@ -241,6 +242,7 @@ RTC_DATA_ATTR int   rtc_effFetchHour      = -1;
 RTC_DATA_ATTR bool  rtc_nightUpdateChecked = false;
 RTC_DATA_ATTR uint8_t rtc_otaFailureCount = 0;
 RTC_DATA_ATTR time_t rtc_otaRetryAfter = 0;
+RTC_DATA_ATTR time_t rtc_ntpLastStart = 0;
 RTC_DATA_ATTR bool  rtc_dashboardDrawn    = false;  // na ekranie jest dashboard (nie komunikat)
 
 // ─── Forward declarations ──────────────────────────────────────────────────────
@@ -1535,24 +1537,30 @@ void setup() {
 
   g_wifiStartUs = esp_timer_get_time();
 
-  // Reuse the RTC-backed clock on deep-sleep wakes. Start NTP in the
-  // background, but only block briefly when the clock is invalid.
-  const bool clockAlreadyValid = time(nullptr) > 1704067200; // 2024-01-01
-  configTzTime(TZ_INFO, NTP_SERVER, NTP_SERVER_2);
-  if (!clockAlreadyValid) {
-    time_t t = 0; struct tm tmp = {};
-    for (int i = 0; i < 12; i++) {
-      delay(250);
-      t = time(nullptr);
-      localtime_r(&t, &tmp);
-      if (tmp.tm_year > 100) break;
+  // Keep the RTC-backed clock between deep-sleep wakes. Start SNTP only
+  // on first boot or once per day; never wait on a valid clock.
+  const time_t clockNow = time(nullptr);
+  const bool clockAlreadyValid = clockNow > 1704067200; // 2024-01-01
+  const bool ntpRefreshDue = !clockAlreadyValid || rtc_ntpLastStart == 0 ||
+                            clockNow - rtc_ntpLastStart >= 24 * 60 * 60;
+  if (ntpRefreshDue) {
+    configTzTime(TZ_INFO, NTP_SERVER, NTP_SERVER_2);
+    if (!clockAlreadyValid) {
+      time_t t = 0; struct tm tmp = {};
+      for (int i = 0; i < 12; i++) {
+        delay(250);
+        t = time(nullptr);
+        localtime_r(&t, &tmp);
+        if (tmp.tm_year > 100) break;
+      }
+      if (tmp.tm_year <= 100) {
+        Serial.println("NTP: zegar niewazny, zachowuje ekran i ide spac");
+        WiFi.disconnect(true); WiFi.mode(WIFI_OFF);
+        goToSleep(normalSleep);
+        return;
+      }
     }
-    if (tmp.tm_year <= 100) {
-      Serial.println("NTP: zegar niewazny, zachowuje ekran i ide spac");
-      WiFi.disconnect(true); WiFi.mode(WIFI_OFF);
-      goToSleep(normalSleep);
-      return;
-    }
+    rtc_ntpLastStart = time(nullptr);
   }
 
   calcUtcOffset();
