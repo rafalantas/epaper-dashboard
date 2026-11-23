@@ -475,43 +475,80 @@ String httpGet(const String& url) {
   return body;
 }
 
-// Open-Meteo has no API key. TLS certificate validation is intentionally
-// disabled only for this public, read-only weather request (no credentials sent).
+// Open-Meteo is a public API and does not require a key. Keep failures visible
+// in Serial so a missing footer value can be diagnosed on the next USB session.
 bool fetchWeather() {
   WiFiClientSecure client;
   client.setInsecure();
   HTTPClient http;
-  http.setTimeout(8000);
+  http.setConnectTimeout(8000);
+  http.setTimeout(12000);
+  http.setReuse(false);
+
   String url = String("https://api.open-meteo.com/v1/forecast?latitude=") +
     String(WEATHER_LATITUDE, 4) + "&longitude=" + String(WEATHER_LONGITUDE, 4) +
     "&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m&timezone=auto";
-  if (!http.begin(client, url)) return false;
-  int status = http.GET();
+
+  Serial.printf("Open-Meteo: GET %s\n", url.c_str());
+  if (!http.begin(client, url)) {
+    Serial.println("Open-Meteo: http.begin failed");
+    return false;
+  }
+
+  const int status = http.GET();
   if (status != HTTP_CODE_OK) {
-    Serial.printf("Open-Meteo HTTP error: %d\n", status);
+    Serial.printf("Open-Meteo: HTTP status %d (%s)\n",
+      status, HTTPClient::errorToString(status).c_str());
     http.end();
     return false;
   }
-  StaticJsonDocument<768> doc;
-  DeserializationError err = deserializeJson(doc, http.getStream());
+
+  const int contentLength = http.getSize();
+  String payload = http.getString();
   http.end();
-  if (err) {
-    Serial.printf("Open-Meteo JSON error: %s\n", err.c_str());
+  Serial.printf("Open-Meteo: HTTP 200, payload=%u bytes, declared=%d\n",
+    (unsigned)payload.length(), contentLength);
+  if (payload.isEmpty()) {
+    Serial.println("Open-Meteo: empty response body");
     return false;
   }
+
+  // Open-Meteo returns metadata as well as current values. 768 bytes is too
+  // tight for the complete response on some API responses; leave headroom.
+  StaticJsonDocument<2048> doc;
+  DeserializationError err = deserializeJson(doc, payload);
+  if (err) {
+    Serial.printf("Open-Meteo: JSON parse failed: %s (payload=%u)\n",
+      err.c_str(), (unsigned)payload.length());
+    return false;
+  }
+
   JsonObject current = doc["current"];
-  float temp = current["temperature_2m"] | -999.0f;
-  float feels = current["apparent_temperature"] | -999.0f;
-  float wind = current["wind_speed_10m"] | -999.0f;
-  int code = current["weather_code"] | -1;
-  if (temp < -100.0f || temp > 70.0f || feels < -100.0f || wind < 0.0f || code < 0) return false;
+  if (current.isNull()) {
+    Serial.println("Open-Meteo: response has no current object");
+    return false;
+  }
+
+  const float temp = current["temperature_2m"] | NAN;
+  const float feels = current["apparent_temperature"] | NAN;
+  const float wind = current["wind_speed_10m"] | NAN;
+  const int code = current["weather_code"] | -1;
+  if (!isfinite(temp) || !isfinite(feels) || !isfinite(wind) ||
+      temp < -100.0f || temp > 70.0f || feels < -100.0f ||
+      wind < 0.0f || code < 0 || code > 99) {
+    Serial.printf("Open-Meteo: invalid values temp=%.1f feels=%.1f wind=%.1f code=%d\n",
+      temp, feels, wind, code);
+    return false;
+  }
+
   rtc_weatherTemp = temp;
   rtc_weatherFeels = feels;
   rtc_weatherWind = wind;
   rtc_weatherCode = code;
   rtc_weatherValid = true;
   rtc_weatherLastFetch = time(nullptr);
-  Serial.printf("Open-Meteo: %.1fC odcz. %.1fC wiatr %.0f km/h kod %d\n", temp, feels, wind, code);
+  Serial.printf("Open-Meteo: OK %.1fC, odcz. %.1fC, wiatr %.0f km/h, WMO %d\n",
+    temp, feels, wind, code);
   return true;
 }
 
@@ -1152,54 +1189,78 @@ void drawScreen() {
     epd.setCursor(650, 401); epd.print(tb);
   }
 
-  // ── Stopka: lewa (czas/firmware), srodek (pogoda), prawa (status/bateria) ──
+  // ── Stopka: trzy czytelne kolumny, dwa wiersze, bez nakladania danych ──
   epd.fillRect(10, 423, 780, 2, TFT_BLACK);
-  epd.drawLine(340, 428, 340, 460, TFT_BLACK);
+  epd.drawLine(330, 428, 330, 460, TFT_BLACK);
   epd.drawLine(525, 428, 525, 460, TFT_BLACK);
+
   time_t now2 = time(nullptr);
   struct tm ti2 = {};
   localtime_r(&now2, &ti2);
   char timeBuf[24];
   strftime(timeBuf, sizeof(timeBuf), "%H:%M  %d.%m.%Y", &ti2);
-  epd.setTextSize(1);
-  epd.setCursor(16, 436); epd.print("Akt.: "); epd.print(timeBuf);
-  epd.setCursor(16, 452); epd.print("Firmware: v"); epd.print(FIRMWARE_VERSION);
-  epd.print("  GitHub: ");
-  epd.print(latestGithubVersion.isEmpty() ? "sprawdzanie nocne" : "v" + latestGithubVersion);
 
-  // Pogoda: zachowuje ostatni poprawny odczyt z RTC, gdy API chwilowo nie odpowiada.
+  // Kolumna 1: aktualizacja i obie wersje firmware.
+  epd.setTextSize(1);
+  epd.setCursor(16, 436);
+  epd.print("Akt.: ");
+  epd.print(timeBuf);
+  epd.setCursor(16, 452);
+  epd.print("FW v");
+  epd.print(FIRMWARE_VERSION);
+  epd.print("  GitHub ");
+  epd.print(latestGithubVersion.isEmpty() ? "--" : "v" + latestGithubVersion);
+
+  // Kolumna 2: pogoda. Gdy API nie odpowie, pokazujemy jasny status zamiast
+  // mylacego "Pogoda: --"; ostatni poprawny odczyt pozostaje w RTC.
   if (rtc_weatherValid) {
-    drawWeatherIcon(348, 432, rtc_weatherCode);
+    drawWeatherIcon(338, 432, rtc_weatherCode);
     char tempBuf[16], feelsBuf[20], windBuf[20];
     snprintf(tempBuf, sizeof(tempBuf), "%.1fC", rtc_weatherTemp);
     snprintf(feelsBuf, sizeof(feelsBuf), "odcz. %.0fC", rtc_weatherFeels);
-    snprintf(windBuf, sizeof(windBuf), "wiatr %.0f km/h", rtc_weatherWind);
-    epd.setTextSize(2); epd.setCursor(380, 435); epd.print(tempBuf);
-    epd.setTextSize(1); epd.setCursor(380, 452); epd.print(feelsBuf);
-    epd.setCursor(444, 452); epd.print(windBuf);
+    snprintf(windBuf, sizeof(windBuf), "wiatr %.0f", rtc_weatherWind);
+    epd.setTextSize(2);
+    epd.setCursor(370, 433);
+    epd.print(tempBuf);
+    epd.setTextSize(1);
+    epd.setCursor(370, 452);
+    epd.print(feelsBuf);
+    epd.setCursor(438, 452);
+    epd.print(windBuf);
   } else {
-    epd.setTextSize(1); epd.setCursor(380, 444); epd.print("Pogoda: --");
+    epd.setTextSize(1);
+    epd.setCursor(348, 436);
+    epd.print("POGODA");
+    epd.setCursor(348, 452);
+    epd.print("brak danych");
   }
 
-  // Prawa czesc pozostaje z dotychczasowymi informacjami EcoFlow i baterii.
+  // Kolumna 3: status EcoFlow/wybudzenia w pierwszym wierszu, bateria ekranu
+  // w drugim. Nie używamy już tych samych współrzędnych dla obu elementów.
   epd.setTextSize(1);
-  epd.setCursor(540, 436); epd.print("budzenie #"); epd.print(rtc_bootCount);
-  epd.setCursor(680, 436); epd.print(state.connected ? "EcoFlow: OK" : "EcoFlow: brak");
+  epd.setCursor(535, 436);
+  epd.print("Budzenie #");
+  epd.print(rtc_bootCount);
+  epd.setCursor(665, 436);
+  epd.print(state.connected ? "EcoFlow OK" : "EcoFlow brak");
 
-  // Bateria ekranu: ikona z wypelnieniem + procent i napiecie.
   if (state.devBatPct >= 0) {
-    const int bx = 600, by = 450;
+    const int bx = 535, by = 448;
     epd.drawRect(bx, by, 26, 12, TFT_BLACK);
     epd.fillRect(bx + 26, by + 3, 3, 6, TFT_BLACK);
-    int fill = (int)(22.0f * state.devBatPct / 100.0f);
+    const int fill = (int)(22.0f * state.devBatPct / 100.0f);
     if (fill > 0) epd.fillRect(bx + 2, by + 2, fill, 8, TFT_BLACK);
     char bl[28];
-    snprintf(bl, sizeof(bl), "Ekran: %.0f%% %.2fV%s", state.devBatPct, state.devBatV,
-             state.devBatRate > 1.0f ? " lad." : "");
-    epd.setTextSize(1); epd.setCursor(bx + 36, 452); epd.print(bl);
+    snprintf(bl, sizeof(bl), "Ekran %.0f%% %.2fV%s", state.devBatPct,
+      state.devBatV, state.devBatRate > 1.0f ? " lad." : "");
+    epd.setCursor(bx + 36, 452);
+    epd.print(bl);
     if (state.devBatPct <= BATTERY_LOW_PCT) {
       drawBadge(600, 466, 190, 12, "NISKA BATERIA EKRANU!", true);
     }
+  } else {
+    epd.setCursor(535, 452);
+    epd.print("Bateria ekranu: brak miernika");
   }
 
   epd.update();
