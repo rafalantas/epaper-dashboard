@@ -1189,78 +1189,103 @@ void drawScreen() {
     epd.setCursor(650, 401); epd.print(tb);
   }
 
-  // ── Stopka: trzy czytelne kolumny, dwa wiersze, bez nakladania danych ──
-  epd.fillRect(10, 423, 780, 2, TFT_BLACK);
-  epd.drawLine(330, 428, 330, 460, TFT_BLACK);
-  epd.drawLine(525, 428, 525, 460, TFT_BLACK);
+  // ── Stopka: jeden panel, cztery sekcje i wspolna siatka ────────────────
+  // Panel ma stale marginesy; wszystkie elementy mieszcza sie w obszarze
+  // y=418..476, bez nachodzenia na sekcje "NAJTANIEJ DZIS".
+  const int footerX = 10, footerY = 418, footerW = 780, footerH = 58;
+  epd.fillRoundRect(footerX, footerY, footerW, footerH, 8, TFT_WHITE);
+  epd.drawRoundRect(footerX, footerY, footerW, footerH, 8, TFT_BLACK);
 
-  time_t now2 = time(nullptr);
-  struct tm ti2 = {};
-  localtime_r(&now2, &ti2);
-  char timeBuf[24];
-  strftime(timeBuf, sizeof(timeBuf), "%H:%M  %d.%m.%Y", &ti2);
+  // Separatory dziela panel na: aktualizacja, pogoda, status i bateria.
+  epd.drawLine(210, 426, 210, 468, TFT_BLACK);
+  epd.drawLine(435, 426, 435, 468, TFT_BLACK);
+  epd.drawLine(610, 426, 610, 468, TFT_BLACK);
 
-  // Kolumna 1: aktualizacja i obie wersje firmware.
+  time_t footerNow = time(nullptr);
+  struct tm footerTm = {};
+  localtime_r(&footerNow, &footerTm);
+  char footerTime[8], footerDate[12];
+  strftime(footerTime, sizeof(footerTime), "%H:%M", &footerTm);
+  strftime(footerDate, sizeof(footerDate), "%d.%m.%Y", &footerTm);
+
+  // 1. Aktualizacja: mocny akcent na godzinie, wersje w jednej linii.
   epd.setTextSize(1);
-  epd.setCursor(16, 436);
-  epd.print("Akt.: ");
-  epd.print(timeBuf);
-  epd.setCursor(16, 452);
-  epd.print("FW v");
+  epd.setCursor(22, 429);
+  epd.print("AKTUALIZACJA");
+  epd.setTextSize(2);
+  epd.setCursor(22, 442);
+  epd.print(footerTime);
+  epd.setTextSize(1);
+  epd.setCursor(88, 450);
+  epd.print(footerDate);
+  epd.setCursor(22, 466);
+  epd.print("FW ");
   epd.print(FIRMWARE_VERSION);
-  epd.print("  GitHub ");
-  epd.print(latestGithubVersion.isEmpty() ? "--" : "v" + latestGithubVersion);
+  epd.print(" | GH ");
+  epd.print(latestGithubVersion.isEmpty() ? "--" : latestGithubVersion);
 
-  // Kolumna 2: pogoda. Gdy API nie odpowie, pokazujemy jasny status zamiast
-  // mylacego "Pogoda: --"; ostatni poprawny odczyt pozostaje w RTC.
+  // 2. Pogoda: ikona i temperatura na pierwszym planie, szczegoly pod spodem.
+  epd.setTextSize(1);
+  epd.setCursor(222, 429);
+  epd.print("POGODA");
   if (rtc_weatherValid) {
-    drawWeatherIcon(338, 432, rtc_weatherCode);
-    char tempBuf[16], feelsBuf[20], windBuf[20];
-    snprintf(tempBuf, sizeof(tempBuf), "%.1fC", rtc_weatherTemp);
-    snprintf(feelsBuf, sizeof(feelsBuf), "odcz. %.0fC", rtc_weatherFeels);
-    snprintf(windBuf, sizeof(windBuf), "wiatr %.0f", rtc_weatherWind);
+    drawWeatherIcon(222, 439, rtc_weatherCode);
+    char footerTemp[12], footerFeels[18], footerWind[18];
+    snprintf(footerTemp, sizeof(footerTemp), "%.1fC", rtc_weatherTemp);
+    snprintf(footerFeels, sizeof(footerFeels), "Odcz. %.0fC", rtc_weatherFeels);
+    snprintf(footerWind, sizeof(footerWind), "Wiatr %.0f km/h", rtc_weatherWind);
     epd.setTextSize(2);
-    epd.setCursor(370, 433);
-    epd.print(tempBuf);
+    epd.setCursor(260, 443);
+    epd.print(footerTemp);
     epd.setTextSize(1);
-    epd.setCursor(370, 452);
-    epd.print(feelsBuf);
-    epd.setCursor(438, 452);
-    epd.print(windBuf);
+    epd.setCursor(330, 447);
+    epd.print(footerFeels);
+    epd.setCursor(330, 464);
+    epd.print(footerWind);
   } else {
-    epd.setTextSize(1);
-    epd.setCursor(348, 436);
-    epd.print("POGODA");
-    epd.setCursor(348, 452);
-    epd.print("brak danych");
+    epd.setCursor(222, 453);
+    epd.print("Brak danych");
+    epd.setCursor(222, 466);
+    epd.print("oczekiwanie na odczyt");
   }
 
-  // Kolumna 3: status EcoFlow/wybudzenia w pierwszym wierszu, bateria ekranu
-  // w drugim. Nie używamy już tych samych współrzędnych dla obu elementów.
+  // 3. Status urzadzenia i polaczenia EcoFlow.
   epd.setTextSize(1);
-  epd.setCursor(535, 436);
-  epd.print("Budzenie #");
+  epd.setCursor(447, 429);
+  epd.print("STATUS");
+  epd.setCursor(447, 447);
+  epd.print("Wybudzenie #");
   epd.print(rtc_bootCount);
-  epd.setCursor(665, 436);
-  epd.print(state.connected ? "EcoFlow OK" : "EcoFlow brak");
+  epd.setCursor(447, 464);
+  epd.print("EcoFlow: ");
+  epd.print(state.connected ? "OK" : "brak");
 
+  // 4. Bateria ekranu: ikona, procent i napiecie; alarm tylko przy niskim SOC.
+  epd.setTextSize(1);
+  epd.setCursor(622, 429);
+  epd.print("BATERIA EKRANU");
   if (state.devBatPct >= 0) {
-    const int bx = 535, by = 448;
-    epd.drawRect(bx, by, 26, 12, TFT_BLACK);
-    epd.fillRect(bx + 26, by + 3, 3, 6, TFT_BLACK);
-    const int fill = (int)(22.0f * state.devBatPct / 100.0f);
-    if (fill > 0) epd.fillRect(bx + 2, by + 2, fill, 8, TFT_BLACK);
-    char bl[28];
-    snprintf(bl, sizeof(bl), "Ekran %.0f%% %.2fV%s", state.devBatPct,
-      state.devBatV, state.devBatRate > 1.0f ? " lad." : "");
-    epd.setCursor(bx + 36, 452);
-    epd.print(bl);
+    const int batteryX = 622, batteryY = 443;
+    epd.drawRect(batteryX, batteryY, 25, 13, TFT_BLACK);
+    epd.fillRect(batteryX + 25, batteryY + 4, 3, 5, TFT_BLACK);
+    const int batteryFill = (int)(21.0f * state.devBatPct / 100.0f);
+    if (batteryFill > 0) {
+      epd.fillRect(batteryX + 2, batteryY + 2, batteryFill, 9, TFT_BLACK);
+    }
+    char batteryLabel[24];
+    snprintf(batteryLabel, sizeof(batteryLabel), "%.0f%%  %.2fV",
+      state.devBatPct, state.devBatV);
+    epd.setCursor(656, 452);
+    epd.print(batteryLabel);
     if (state.devBatPct <= BATTERY_LOW_PCT) {
-      drawBadge(600, 466, 190, 12, "NISKA BATERIA EKRANU!", true);
+      drawBadge(622, 461, 156, 12, "NISKA BATERIA", true);
+    } else if (state.devBatRate > 1.0f) {
+      epd.setCursor(656, 466);
+      epd.print("Ladowanie");
     }
   } else {
-    epd.setCursor(535, 452);
-    epd.print("Bateria ekranu: brak miernika");
+    epd.setCursor(622, 452);
+    epd.print("Brak miernika");
   }
 
   epd.update();
