@@ -505,7 +505,6 @@ bool fetchWeather() {
     return false;
   }
 
-  const int contentLength = http.getSize();
   String payload = http.getString();
   http.end();
   if (payload.isEmpty()) {
