@@ -659,12 +659,7 @@ bool fetchEfficiency() {
 
   // 2. /api/efficiency — forecastKwh (prognoza)
   {
-    HTTPClient http;
-    http.begin(deviceSettings.apiHost + "/api/efficiency");
-    http.setTimeout(25000);
-    String body = "";
-    if (http.GET() == HTTP_CODE_OK) body = http.getString();
-    http.end();
+    String body = httpGet(deviceSettings.apiHost + "/api/efficiency");
     if (!body.isEmpty()) {
       StaticJsonDocument<128> filter;
       filter["forecastKwh"] = true;
@@ -799,7 +794,6 @@ bool loadPrices(int currentLocalHour, int yday) {
     rtc_priceAttemptSlot = attemptSlot;
     if (fetchPricesFromApi()) selectCurrentPrice();
     else if (currentPriceIdx < 0) priceCount = 0;  // cache bezuzyteczny
-  } else if (needFetch) {
   }
   return priceCount > 0;
 }
