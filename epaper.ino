@@ -16,6 +16,7 @@ using fs::FS;
 #include <ArduinoJson.h>
 #include <Preferences.h>
 #include <time.h>
+#include <esp_timer.h>
 #include <Adafruit_MAX1704X.h>
 #include "ota_update.h"
 
@@ -28,6 +29,41 @@ using fs::FS;
 
 const char* NTP_SERVER   = "pool.ntp.org";
 const char* NTP_SERVER_2 = "time.google.com";
+
+// Open-Meteo uses Let's Encrypt; validate the chain with ISRG Root X1.
+static const char OPEN_METEO_ROOT_CA[] PROGMEM = R"PEM(
+-----BEGIN CERTIFICATE-----
+MIIFazCCA1OgAwIBAgIRAIIQz7DSQONZRGPgu2OCiwAwDQYJKoZIhvcNAQELBQAw
+TzELMAkGA1UEBhMCVVMxKTAnBgNVBAoTIEludGVybmV0IFNlY3VyaXR5IFJlc2Vh
+cmNoIEdyb3VwMRUwEwYDVQQDEwxJU1JHIFJvb3QgWDEwHhcNMTUwNjA0MTEwNDM4
+WhcNMzUwNjA0MTEwNDM4WjBPMQswCQYDVQQGEwJVUzEpMCcGA1UEChMgSW50ZXJu
+ZXQgU2VjdXJpdHkgUmVzZWFyY2ggR3JvdXAxFTATBgNVBAMTDElTUkcgUm9vdCBY
+MTCCAiIwDQYJKoZIhvcNAQEBBQADggIPADCCAgoCggIBAK3oJHP0FDfzm54rVygc
+h77ct984kIxuPOZXoHj3dcKi/vVqbvYATyjb3miGbESTtrFj/RQSa78f0uoxmyF+
+0TM8ukj13Xnfs7j/EvEhmkvBioZxaUpmZmyPfjxwv60pIgbz5MDmgK7iS4+3mX6U
+A5/TR5d8mUgjU+g4rk8Kb4Mu0UlXjIB0ttov0DiNewNwIRt18jA8+o+u3dpjq+sW
+T8KOEUt+zwvo/7V3LvSye0rgTBIlDHCNAymg4VMk7BPZ7hm/ELNKjD+Jo2FR3qyH
+B5T0Y3HsLuJvW5iB4YlcNHlsdu87kGJ55tukmi8mxdAQ4Q7e2RCOFvu396j3x+UC
+B5iPNgiV5+I3lg02dZ77DnKxHZu8A/lJBdiB3QW0KtZB6awBdpUKD9jf1b0SHzUv
+KBds0pjBqAlkd25HN7rOrFleaJ1/ctaJxQZBKT5ZPt0m9STJEadao0xAH0ahmbWn
+OlFuhjuefXKnEgV4We0+UXgVCwOPjdAvBbI+e0ocS3MFEvzG6uBQE3xDk3SzynTn
+jh8BCNAw1FtxNrQHusEwMFxIt4I7mKZ9YIqioymCzLq9gwQbooMDQaHWBfEbwrbw
+qHyGO0aoSCqI3Haadr8faqU9GY/rOPNk3sgrDQoo//fb4hVC1CLQJ13hef4Y53CI
+rU7m2Ys6xt0nUW7/vGT1M0NPAgMBAAGjQjBAMA4GA1UdDwEB/wQEAwIBBjAPBgNV
+HRMBAf8EBTADAQH/MB0GA1UdDgQWBBR5tFnme7bl5AFzgAiIyBpY9umbbjANBgkq
+hkiG9w0BAQsFAAOCAgEAVR9YqbyyqFDQDLHYGmkgJykIrGF1XIpu+ILlaS/V9lZL
+ubhzEFnTIZd+50xx+7LSYK05qAvqFyFWhfFQDlnrzuBZ6brJFe+GnY+EgPbk6ZGQ
+3BebYhtF8GaV0nxvwuo77x/Py9auJ/GpsMiu/X1+mvoiBOv/2X/qkSsisRcOj/KK
+NFtY2PwByVS5uCbMiogziUwthDyC3+6WVwW6LLv3xLfHTjuCvjHIInNzktHCgKQ5
+ORAzI4JMPJ+GslWYHb4phowim57iaztXOoJwTdwJx4nLCgdNbOhdjsnvzqvHu7Ur
+TkXWStAmzOVyyghqpZXjFaH3pO3JLF+l+/+sKAIuvtd7u+Nxe5AW0wdeRlN8NwdC
+jNPElpzVmbUq4JUagEiuTDkHzsxHpFKVK7q4+63SM1N95R1NbdWhscdCb+ZAJzVc
+oyi3B43njTOQ5yOf+1CceWxG1bQVs5ZufpsMljq4Ui0/1lvh+wjChP4kqKOJ2qxq
+4RgqsahDYVvTH9w7jXbyLeiNdd8XM2w9U/t7y0Ff/9yi0GE44Za4rF2LN9d11TPA
+mRGunUHBcnWEvgJBQl9nJEiU0Zsnvgc/ubhPgXRR4Xq37Z0j4r7g1SgEEzwxA57d
+emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
+-----END CERTIFICATE-----
+)PEM";
 const char* TZ_INFO      = "CET-1CEST,M3.5.0,M10.5.0/3";
 
 // ─── Struktury ────────────────────────────────────────────────────────────────
@@ -169,7 +205,31 @@ void readDeviceBattery(bool firstBoot) {
 }
 
 // Uspienie z miernikiem w hibernacji (ok. 3 uA zamiast ok. 23 uA).
+RTC_DATA_ATTR uint64_t rtc_totalAwakeMs = 0;
+RTC_DATA_ATTR uint64_t rtc_totalWifiMs = 0;
+RTC_DATA_ATTR uint32_t rtc_lastAwakeMs = 0;
+RTC_DATA_ATTR uint32_t rtc_lastWifiMs = 0;
+uint64_t g_awakeStartUs = 0;
+uint64_t g_wifiStartUs = 0;
+
+void recordWifiActivity() {
+  if (g_wifiStartUs == 0) return;
+  const uint64_t nowUs = esp_timer_get_time();
+  rtc_lastWifiMs = (uint32_t)((nowUs - g_wifiStartUs) / 1000ULL);
+  rtc_totalWifiMs += rtc_lastWifiMs;
+  g_wifiStartUs = 0;
+}
+
 void goToSleep(uint64_t seconds) {
+  if (g_wifiStartUs != 0 && WiFi.status() == WL_CONNECTED) recordWifiActivity();
+  if (g_awakeStartUs != 0) {
+    rtc_lastAwakeMs = (uint32_t)((esp_timer_get_time() - g_awakeStartUs) / 1000ULL);
+    rtc_totalAwakeMs += rtc_lastAwakeMs;
+    Serial.printf("DUTY: awake=%lu ms wifi=%lu ms totals awake=%llu ms wifi=%llu ms (no current measurement)\n",
+      (unsigned long)rtc_lastAwakeMs, (unsigned long)rtc_lastWifiMs,
+      (unsigned long long)rtc_totalAwakeMs, (unsigned long long)rtc_totalWifiMs);
+    g_awakeStartUs = 0;
+  }
   if (maxPresent) maxLipo.hibernate();
   esp_deep_sleep(seconds * 1000000ULL);
 }
@@ -180,6 +240,9 @@ RTC_DATA_ATTR float rtc_solarKwh          = 0;
 RTC_DATA_ATTR float rtc_forecastTomorrowKwh = -1;
 RTC_DATA_ATTR int   rtc_effFetchHour      = -1;
 RTC_DATA_ATTR bool  rtc_nightUpdateChecked = false;
+RTC_DATA_ATTR uint8_t rtc_otaFailureCount = 0;
+RTC_DATA_ATTR time_t rtc_otaRetryAfter = 0;
+RTC_DATA_ATTR time_t rtc_ntpLastStart = 0;
 RTC_DATA_ATTR bool  rtc_dashboardDrawn    = false;  // na ekranie jest dashboard (nie komunikat)
 
 // ─── Forward declarations ──────────────────────────────────────────────────────
@@ -482,7 +545,7 @@ String httpGet(const String& url) {
 // in Serial so a missing footer value can be diagnosed on the next USB session.
 bool fetchWeather() {
   WiFiClientSecure client;
-  client.setInsecure();
+  client.setCACert(OPEN_METEO_ROOT_CA);
   HTTPClient http;
   http.setConnectTimeout(8000);
   http.setTimeout(12000);
@@ -734,14 +797,56 @@ void selectCurrentPrice() {
 
 // Pobiera /api/prices i zapisuje do prices[] + RTC. Bledy tylko w logu -
 // nie nadpisujemy dashboardu na e-papierze.
-bool fetchPricesFromApi() {
-  String body = httpGet(deviceSettings.apiHost + "/api/prices");
-  if (body.isEmpty()) {  // jedna ponowna proba
-    delay(2000);
-    body = httpGet(deviceSettings.apiHost + "/api/prices");
+static int daysInMonth(int year, int month) {
+  static const uint8_t days[] = {31,28,31,30,31,30,31,31,30,31,30,31};
+  if (month < 1 || month > 12) return 0;
+  if (month == 2) {
+    const bool leap = (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+    return leap ? 29 : 28;
   }
+  return days[month - 1];
+}
+
+// Existing API contract is UTC timestamps, optionally suffixed with Z.
+// Reject numeric offsets rather than silently shifting a displayed price hour.
+static bool parsePriceStartUtc(const char* value, int& year, int& month,
+                               int& day, int& hour, int& minute, int& second) {
+  if (value == nullptr) return false;
+  int consumed = 0;
+  const int fields = sscanf(value, "%4d-%2d-%2dT%2d:%2d:%2d%n",
+                            &year, &month, &day, &hour, &minute, &second, &consumed);
+  if (fields != 6) return false;
+  const char* suffix = value + consumed;
+  if (*suffix == 'Z' && suffix[1] == '\0') {
+    // Explicit UTC marker.
+  } else if (*suffix != '\0') {
+    return false;
+  }
+  return year >= 2024 && year <= 2100 &&
+         month >= 1 && month <= 12 &&
+         day >= 1 && day <= daysInMonth(year, month) &&
+         hour >= 0 && hour <= 23 &&
+         minute >= 0 && minute <= 59 &&
+         second >= 0 && second <= 59;
+}
+
+static long long priceValidationMinute(int year, int month, int day,
+                                       int hour, int minute) {
+  // Gregorian date -> minutes since Unix epoch. Used only for sequence checks.
+  year -= month <= 2;
+  const int era = (year >= 0 ? year : year - 399) / 400;
+  const unsigned yoe = (unsigned)(year - era * 400);
+  const unsigned doy = (153U * (month + (month > 2 ? -3 : 9)) + 2U) / 5U + day - 1U;
+  const unsigned doe = yoe * 365U + yoe / 4U - yoe / 100U + doy;
+  const long long days = (long long)era * 146097LL + (long long)doe - 719468LL;
+  return days * 1440LL + hour * 60LL + minute;
+}
+
+bool fetchPricesFromApi() {
+  // One request per hourly attempt slot; loadPrices() handles a later retry.
+  String body = httpGet(deviceSettings.apiHost + "/api/prices");
   if (body.isEmpty()) { Serial.println("prices: brak odpowiedzi"); return false; }
-  // Only retain fields consumed by the display; the API may return extra metadata.
+
   StaticJsonDocument<256> filter;
   filter["prices"][0]["price"] = true;
   filter["prices"][0]["isCheap"] = true;
@@ -752,27 +857,71 @@ bool fetchPricesFromApi() {
     Serial.println("prices: JSON error");
     return false;
   }
+
   JsonArray arr = doc["prices"].as<JsonArray>();
-  if (arr.isNull()) { Serial.println("prices: brak tablicy"); return false; }
+  if (arr.isNull() || arr.size() < 12 || arr.size() > 48) {
+    Serial.printf("prices: nieprawidlowa liczba slotow (%u)\n",
+                  arr.isNull() ? 0U : (unsigned)arr.size());
+    return false;
+  }
 
+  // Stage the full response first. Never partially overwrite a good RTC cache.
+  float newPrice[48];
+  int8_t newHour[48];
+  long newKey[48];
+  bool newCheap[48], newExpensive[48];
+  long long previousMinute = -1;
   int n = 0;
-  for (JsonObject slot : arr) {
-    if (n >= 48) break;
-    if (slot["price"].isNull()) continue;
-    prices[n].price       = slot["price"] | 0.0f;
-    prices[n].isCheap     = slot["isCheap"]     | false;
-    prices[n].isExpensive = slot["isExpensive"] | false;
 
-    String startStr = slot["start"].as<String>();
-    int Y=0,Mo=0,D=0,h=0,m=0,s=0;
-    sscanf(startStr.c_str(), "%d-%d-%dT%d:%d:%d", &Y,&Mo,&D,&h,&m,&s);
+  for (JsonObject slot : arr) {
+    if (!slot["price"].is<float>() ||
+        !slot["isCheap"].is<bool>() ||
+        !slot["isExpensive"].is<bool>() ||
+        !slot["start"].is<const char*>()) {
+      Serial.println("prices: brak wymaganych pol");
+      return false;
+    }
+
+    const float value = slot["price"].as<float>();
+    if (!isfinite(value) || value < -10000.0f || value > 100000.0f) {
+      Serial.printf("prices: cena poza zakresem (%.3f)\n", value);
+      return false;
+    }
+
+    int Y=0, Mo=0, D=0, h=0, m=0, sec=0;
+    if (!parsePriceStartUtc(slot["start"].as<const char*>(), Y, Mo, D, h, m, sec)) {
+      Serial.println("prices: nieprawidlowy format daty/czasu (oczekiwane UTC ISO-8601)");
+      return false;
+    }
+
+    const long long minuteKey = priceValidationMinute(Y, Mo, D, h, m);
+    if (previousMinute >= 0 && minuteKey - previousMinute != 60) {
+      Serial.println("prices: sloty nie sa kolejnymi godzinami");
+      return false;
+    }
+    previousMinute = minuteKey;
+
     int localHour = (h + (int)(g_utcOffsetSec / 3600)) % 24;
     if (localHour < 0) localHour += 24;
-    prices[n].hour = localHour;
-    priceKey[n] = utcTimeKey(Y, Mo, D, h, m);
+    newPrice[n] = value;
+    newHour[n] = (int8_t)localHour;
+    newKey[n] = utcTimeKey(Y, Mo, D, h, m);
+    newCheap[n] = slot["isCheap"].as<bool>();
+    newExpensive[n] = slot["isExpensive"].as<bool>();
+    if (newCheap[n] && newExpensive[n]) {
+      Serial.println("prices: slot nie moze byc jednoczesnie tani i drogi");
+      return false;
+    }
     n++;
   }
-  if (n == 0) return false;
+
+  for (int i = 0; i < n; i++) {
+    prices[i].price = newPrice[i];
+    prices[i].hour = newHour[i];
+    prices[i].isCheap = newCheap[i];
+    prices[i].isExpensive = newExpensive[i];
+    priceKey[i] = newKey[i];
+  }
   priceCount = n;
   savePricesToRtc();
   return true;
@@ -1348,6 +1497,8 @@ void drawNightScreen(const struct tm& nowTm) {
 // ─── Setup ────────────────────────────────────────────────────────────────────
 void setup() {
   Serial.begin(115200);
+  g_awakeStartUs = esp_timer_get_time();
+  rtc_lastWifiMs = 0;
   rtc_bootCount++;
   // Okno serwisowe na Upload tylko po zasilaniu/resecie, nie po kazdym budzeniu ze snu.
   if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_UNDEFINED) delay(3000);
@@ -1385,19 +1536,33 @@ void setup() {
     return;
   }
 
-  // NTP sync
-  configTzTime(TZ_INFO, NTP_SERVER, NTP_SERVER_2);
-  {
-    time_t t = 0; struct tm tmp = {};
-    for (int i = 0; i < 30; i++) {
-      delay(500); t = time(nullptr); localtime_r(&t, &tmp);
-      if (tmp.tm_year > 100) break;
+  g_wifiStartUs = esp_timer_get_time();
+
+  // Keep the RTC-backed clock between deep-sleep wakes. Start SNTP only
+  // on first boot or once per day; never wait on a valid clock.
+  const time_t clockNow = time(nullptr);
+  const bool clockAlreadyValid = clockNow > 1704067200; // 2024-01-01
+  const bool ntpRefreshDue = !clockAlreadyValid || rtc_ntpLastStart == 0 ||
+                            clockNow - rtc_ntpLastStart >= 24 * 60 * 60;
+  if (ntpRefreshDue) {
+    configTzTime(TZ_INFO, NTP_SERVER, NTP_SERVER_2);
+    if (!clockAlreadyValid) {
+      time_t t = 0; struct tm tmp = {};
+      for (int i = 0; i < 12; i++) {
+        delay(250);
+        t = time(nullptr);
+        localtime_r(&t, &tmp);
+        if (tmp.tm_year > 100) break;
+      }
+      if (tmp.tm_year <= 100) {
+        Serial.println("NTP: zegar niewazny, zachowuje ekran i ide spac");
+        recordWifiActivity();
+        WiFi.disconnect(true); WiFi.mode(WIFI_OFF);
+        goToSleep(normalSleep);
+        return;
+      }
     }
-    if (tmp.tm_year <= 100) {
-      WiFi.disconnect(true); WiFi.mode(WIFI_OFF);
-      goToSleep(normalSleep);
-      return;
-    }
+    rtc_ntpLastStart = time(nullptr);
   }
 
   calcUtcOffset();
@@ -1454,10 +1619,21 @@ void setup() {
   // refreshed by OTA; it keeps its existing night image while firmware downloads.
   if (!nightMode) {
     rtc_nightUpdateChecked = false;
-  } else if (!rtc_nightUpdateChecked) {
+  } else if (!rtc_nightUpdateChecked &&
+             (rtc_otaRetryAfter == 0 || now >= rtc_otaRetryAfter)) {
     rtc_nightUpdateChecked = true;
     String checkedVersion;
     otaUpdated = checkAndInstallFirmwareUpdate(&checkedVersion);
+    if (otaUpdated || !checkedVersion.isEmpty()) {
+      rtc_otaFailureCount = 0;
+      rtc_otaRetryAfter = 0;
+    } else {
+      if (rtc_otaFailureCount < 4) rtc_otaFailureCount++;
+      const uint32_t backoffHours = min(48UL << (rtc_otaFailureCount - 1), 384UL);
+      rtc_otaRetryAfter = now + (time_t)backoffHours * 3600;
+      Serial.printf("OTA: retry za %lu h (failure=%u)\n",
+        (unsigned long)backoffHours, (unsigned)rtc_otaFailureCount);
+    }
     if (!checkedVersion.isEmpty()) {
       Preferences prefs;
       if (prefs.begin("epaper", false)) {
@@ -1467,6 +1643,7 @@ void setup() {
     }
   }
 
+  recordWifiActivity();
   WiFi.disconnect(true);
   WiFi.mode(WIFI_OFF);
   delay(100);
