@@ -151,7 +151,6 @@ bool maxPresent = false;
 // Odczyt zaraz po wybudzeniu, przed wlaczeniem Wi-Fi (napiecie bez obciazenia radiem).
 void readDeviceBattery(bool firstBoot) {
   if (!maxLipo.begin()) {
-    Serial.println("MAX17048: nie wykryto");
     return;
   }
   maxPresent = true;
@@ -161,15 +160,12 @@ void readDeviceBattery(bool firstBoot) {
   float v = maxLipo.cellVoltage();
   float pct = maxLipo.cellPercent();
   if (isnan(v) || isnan(pct)) {
-    Serial.println("MAX17048: bledny odczyt");
     return;
   }
   state.devBatV = v;
   state.devBatPct = max(0.0f, min(100.0f, pct));
   float rate = maxLipo.chargeRate();
   state.devBatRate = isnan(rate) ? 0.0f : rate;
-  Serial.printf("Bateria ekranu: %.0f%% %.2fV %.1f%%/h\n",
-    state.devBatPct, state.devBatV, state.devBatRate);
 }
 
 // Uspienie z miernikiem w hibernacji (ok. 3 uA zamiast ok. 23 uA).
@@ -272,10 +268,6 @@ void calcUtcOffset() {
   if (diffMins >  720) diffMins -= 1440;
   if (diffMins < -720) diffMins += 1440;
   g_utcOffsetSec = (long)diffMins * 60L;
-  Serial.printf("UTC offset: %ld min (%ldh) local=%02d:%02d utc=%02d:%02d\n",
-    diffMins, g_utcOffsetSec/3600,
-    local_tm.tm_hour, local_tm.tm_min,
-    utc_tm.tm_hour, utc_tm.tm_min);
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -447,7 +439,6 @@ bool connectWiFi() {
     WiFi.begin(deviceSettings.wifiSsid.c_str(), deviceSettings.wifiPassword.c_str(),
                rtc_wifiChannel, rtc_wifiBssid);
     if (waitForWiFi(10)) { rememberWiFi(); return true; }  // 5 s
-    Serial.println("WiFi: szybkie laczenie nieudane, pelne skanowanie");
     rtc_wifiKnown = false;  // router mogl zmienic kanal/AP
     WiFi.disconnect();
     delay(200);
@@ -467,10 +458,22 @@ bool connectWiFi() {
 // ─── HTTP GET ─────────────────────────────────────────────────────────────────
 String httpGet(const String& url) {
   HTTPClient http;
-  http.begin(url);
-  http.setTimeout(15000);
-  String body = "";
-  if (http.GET() == HTTP_CODE_OK) body = http.getString();
+  http.setConnectTimeout(5000);
+  http.setTimeout(10000);
+  http.setReuse(false);
+  if (!http.begin(url)) {
+    Serial.println("API: nie mozna otworzyc polaczenia");
+    return "";
+  }
+
+  const int status = http.GET();
+  String body;
+  if (status == HTTP_CODE_OK) {
+    body = http.getString();
+  } else {
+    Serial.printf("API: HTTP %d (%s) dla endpointu\n",
+      status, HTTPClient::errorToString(status).c_str());
+  }
   http.end();
   return body;
 }
@@ -489,7 +492,6 @@ bool fetchWeather() {
     String(WEATHER_LATITUDE, 4) + "&longitude=" + String(WEATHER_LONGITUDE, 4) +
     "&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m&timezone=auto";
 
-  Serial.printf("Open-Meteo: GET %s\n", url.c_str());
   if (!http.begin(client, url)) {
     Serial.println("Open-Meteo: http.begin failed");
     return false;
@@ -503,11 +505,8 @@ bool fetchWeather() {
     return false;
   }
 
-  const int contentLength = http.getSize();
   String payload = http.getString();
   http.end();
-  Serial.printf("Open-Meteo: HTTP 200, payload=%u bytes, declared=%d\n",
-    (unsigned)payload.length(), contentLength);
   if (payload.isEmpty()) {
     Serial.println("Open-Meteo: empty response body");
     return false;
@@ -547,8 +546,6 @@ bool fetchWeather() {
   rtc_weatherCode = code;
   rtc_weatherValid = true;
   rtc_weatherLastFetch = time(nullptr);
-  Serial.printf("Open-Meteo: OK %.1fC, odcz. %.1fC, wiatr %.0f km/h, WMO %d\n",
-    temp, feels, wind, code);
   return true;
 }
 
@@ -648,32 +645,29 @@ bool fetchEfficiency() {
   {
     String body = httpGet(deviceSettings.apiHost + "/api/energy?period=day");
     if (!body.isEmpty()) {
-      DynamicJsonDocument doc(2048);
-      if (deserializeJson(doc, body) == DeserializationError::Ok) {
+      StaticJsonDocument<128> filter;
+      filter["totalKwh"] = true;
+      filter["efficiency"] = true;
+      DynamicJsonDocument doc(256);
+      if (deserializeJson(doc, body, DeserializationOption::Filter(filter)) == DeserializationError::Ok) {
         state.solarKwh    = doc["totalKwh"]   | 0.0f;
         state.independence= doc["efficiency"] | 0.0f;  // 83.8%
         ok = true;
-        Serial.printf("energy OK: solar=%.1fkWh eff=%.1f%%\n",
-          state.solarKwh, state.independence);
       }
     }
   }
 
   // 2. /api/efficiency — forecastKwh (prognoza)
   {
-    HTTPClient http;
-    http.begin(deviceSettings.apiHost + "/api/efficiency");
-    http.setTimeout(25000);
-    String body = "";
-    if (http.GET() == HTTP_CODE_OK) body = http.getString();
-    http.end();
+    String body = httpGet(deviceSettings.apiHost + "/api/efficiency");
     if (!body.isEmpty()) {
-      DynamicJsonDocument doc(4096);
-      if (deserializeJson(doc, body) == DeserializationError::Ok) {
+      StaticJsonDocument<128> filter;
+      filter["forecastKwh"] = true;
+      filter["forecastTomorrow"] = true;
+      DynamicJsonDocument doc(256);
+      if (deserializeJson(doc, body, DeserializationOption::Filter(filter)) == DeserializationError::Ok) {
         state.forecastKwh = doc["forecastKwh"] | 0.0f;
         state.forecastTomorrowKwh = doc["forecastTomorrow"] | -1.0f;
-        Serial.printf("forecast OK: today=%.1f tomorrow=%.1f kWh\n",
-          state.forecastKwh, state.forecastTomorrowKwh);
         ok = true;
       }
     }
@@ -736,8 +730,6 @@ void selectCurrentPrice() {
   for (int i = 0; i < priceCount; i++) {
     if (priceKey[i] <= nowKey && nowKey - priceKey[i] < 60) currentPriceIdx = i;
   }
-  Serial.printf("Prices: %d slots, idx=%d, offset=%ldh\n",
-    priceCount, currentPriceIdx, g_utcOffsetSec/3600);
 }
 
 // Pobiera /api/prices i zapisuje do prices[] + RTC. Bledy tylko w logu -
@@ -749,8 +741,14 @@ bool fetchPricesFromApi() {
     body = httpGet(deviceSettings.apiHost + "/api/prices");
   }
   if (body.isEmpty()) { Serial.println("prices: brak odpowiedzi"); return false; }
-  DynamicJsonDocument doc(10240);
-  if (deserializeJson(doc, body) != DeserializationError::Ok) {
+  // Only retain fields consumed by the display; the API may return extra metadata.
+  StaticJsonDocument<256> filter;
+  filter["prices"][0]["price"] = true;
+  filter["prices"][0]["isCheap"] = true;
+  filter["prices"][0]["isExpensive"] = true;
+  filter["prices"][0]["start"] = true;
+  DynamicJsonDocument doc(6144);
+  if (deserializeJson(doc, body, DeserializationOption::Filter(filter)) != DeserializationError::Ok) {
     Serial.println("prices: JSON error");
     return false;
   }
@@ -796,8 +794,6 @@ bool loadPrices(int currentLocalHour, int yday) {
     rtc_priceAttemptSlot = attemptSlot;
     if (fetchPricesFromApi()) selectCurrentPrice();
     else if (currentPriceIdx < 0) priceCount = 0;  // cache bezuzyteczny
-  } else if (needFetch) {
-    Serial.println("Prices: uzywam cache (kolejna proba za godzine)");
   }
   return priceCount > 0;
 }
@@ -1480,7 +1476,6 @@ void setup() {
     ESP.restart();
   }
 
-  Serial.printf("Sleep %lus. Boot #%d\n", sleepSec, rtc_bootCount);
   goToSleep(sleepSec);
 }
 
