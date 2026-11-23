@@ -734,14 +734,56 @@ void selectCurrentPrice() {
 
 // Pobiera /api/prices i zapisuje do prices[] + RTC. Bledy tylko w logu -
 // nie nadpisujemy dashboardu na e-papierze.
-bool fetchPricesFromApi() {
-  String body = httpGet(deviceSettings.apiHost + "/api/prices");
-  if (body.isEmpty()) {  // jedna ponowna proba
-    delay(2000);
-    body = httpGet(deviceSettings.apiHost + "/api/prices");
+static int daysInMonth(int year, int month) {
+  static const uint8_t days[] = {31,28,31,30,31,30,31,31,30,31,30,31};
+  if (month < 1 || month > 12) return 0;
+  if (month == 2) {
+    const bool leap = (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+    return leap ? 29 : 28;
   }
+  return days[month - 1];
+}
+
+// Existing API contract is UTC timestamps, optionally suffixed with Z.
+// Reject numeric offsets rather than silently shifting a displayed price hour.
+static bool parsePriceStartUtc(const char* value, int& year, int& month,
+                               int& day, int& hour, int& minute, int& second) {
+  if (value == nullptr) return false;
+  int consumed = 0;
+  const int fields = sscanf(value, "%4d-%2d-%2dT%2d:%2d:%2d%n",
+                            &year, &month, &day, &hour, &minute, &second, &consumed);
+  if (fields != 6) return false;
+  const char* suffix = value + consumed;
+  if (*suffix == 'Z' && suffix[1] == '\0') {
+    // Explicit UTC marker.
+  } else if (*suffix != '\0') {
+    return false;
+  }
+  return year >= 2024 && year <= 2100 &&
+         month >= 1 && month <= 12 &&
+         day >= 1 && day <= daysInMonth(year, month) &&
+         hour >= 0 && hour <= 23 &&
+         minute >= 0 && minute <= 59 &&
+         second >= 0 && second <= 59;
+}
+
+static long long priceValidationMinute(int year, int month, int day,
+                                       int hour, int minute) {
+  // Gregorian date -> minutes since Unix epoch. Used only for sequence checks.
+  year -= month <= 2;
+  const int era = (year >= 0 ? year : year - 399) / 400;
+  const unsigned yoe = (unsigned)(year - era * 400);
+  const unsigned doy = (153U * (month + (month > 2 ? -3 : 9)) + 2U) / 5U + day - 1U;
+  const unsigned doe = yoe * 365U + yoe / 4U - yoe / 100U + doy;
+  const long long days = (long long)era * 146097LL + (long long)doe - 719468LL;
+  return days * 1440LL + hour * 60LL + minute;
+}
+
+bool fetchPricesFromApi() {
+  // One request per hourly attempt slot; loadPrices() handles a later retry.
+  String body = httpGet(deviceSettings.apiHost + "/api/prices");
   if (body.isEmpty()) { Serial.println("prices: brak odpowiedzi"); return false; }
-  // Only retain fields consumed by the display; the API may return extra metadata.
+
   StaticJsonDocument<256> filter;
   filter["prices"][0]["price"] = true;
   filter["prices"][0]["isCheap"] = true;
@@ -752,27 +794,71 @@ bool fetchPricesFromApi() {
     Serial.println("prices: JSON error");
     return false;
   }
+
   JsonArray arr = doc["prices"].as<JsonArray>();
-  if (arr.isNull()) { Serial.println("prices: brak tablicy"); return false; }
+  if (arr.isNull() || arr.size() < 12 || arr.size() > 48) {
+    Serial.printf("prices: nieprawidlowa liczba slotow (%u)\n",
+                  arr.isNull() ? 0U : (unsigned)arr.size());
+    return false;
+  }
 
+  // Stage the full response first. Never partially overwrite a good RTC cache.
+  float newPrice[48];
+  int8_t newHour[48];
+  long newKey[48];
+  bool newCheap[48], newExpensive[48];
+  long long previousMinute = -1;
   int n = 0;
-  for (JsonObject slot : arr) {
-    if (n >= 48) break;
-    if (slot["price"].isNull()) continue;
-    prices[n].price       = slot["price"] | 0.0f;
-    prices[n].isCheap     = slot["isCheap"]     | false;
-    prices[n].isExpensive = slot["isExpensive"] | false;
 
-    String startStr = slot["start"].as<String>();
-    int Y=0,Mo=0,D=0,h=0,m=0,s=0;
-    sscanf(startStr.c_str(), "%d-%d-%dT%d:%d:%d", &Y,&Mo,&D,&h,&m,&s);
+  for (JsonObject slot : arr) {
+    if (!slot["price"].is<float>() ||
+        !slot["isCheap"].is<bool>() ||
+        !slot["isExpensive"].is<bool>() ||
+        !slot["start"].is<const char*>()) {
+      Serial.println("prices: brak wymaganych pol");
+      return false;
+    }
+
+    const float value = slot["price"].as<float>();
+    if (!isfinite(value) || value < -10000.0f || value > 100000.0f) {
+      Serial.printf("prices: cena poza zakresem (%.3f)\n", value);
+      return false;
+    }
+
+    int Y=0, Mo=0, D=0, h=0, m=0, sec=0;
+    if (!parsePriceStartUtc(slot["start"].as<const char*>(), Y, Mo, D, h, m, sec)) {
+      Serial.println("prices: nieprawidlowy format daty/czasu (oczekiwane UTC ISO-8601)");
+      return false;
+    }
+
+    const long long minuteKey = priceValidationMinute(Y, Mo, D, h, m);
+    if (previousMinute >= 0 && minuteKey - previousMinute != 60) {
+      Serial.println("prices: sloty nie sa kolejnymi godzinami");
+      return false;
+    }
+    previousMinute = minuteKey;
+
     int localHour = (h + (int)(g_utcOffsetSec / 3600)) % 24;
     if (localHour < 0) localHour += 24;
-    prices[n].hour = localHour;
-    priceKey[n] = utcTimeKey(Y, Mo, D, h, m);
+    newPrice[n] = value;
+    newHour[n] = (int8_t)localHour;
+    newKey[n] = utcTimeKey(Y, Mo, D, h, m);
+    newCheap[n] = slot["isCheap"].as<bool>();
+    newExpensive[n] = slot["isExpensive"].as<bool>();
+    if (newCheap[n] && newExpensive[n]) {
+      Serial.println("prices: slot nie moze byc jednoczesnie tani i drogi");
+      return false;
+    }
     n++;
   }
-  if (n == 0) return false;
+
+  for (int i = 0; i < n; i++) {
+    prices[i].price = newPrice[i];
+    prices[i].hour = newHour[i];
+    prices[i].isCheap = newCheap[i];
+    prices[i].isExpensive = newExpensive[i];
+    priceKey[i] = newKey[i];
+  }
   priceCount = n;
   savePricesToRtc();
   return true;
