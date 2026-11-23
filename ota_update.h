@@ -67,8 +67,6 @@ static bool checkAndInstallFirmwareUpdate(String* checkedVersion = nullptr) {
   const String latestVersion = release["tag_name"] | "";
   if (checkedVersion != nullptr) *checkedVersion = latestVersion;
   if (!isNewerFirmware(latestVersion, FIRMWARE_VERSION)) {
-    Serial.printf("OTA: aktualny firmware %s (GitHub: %s)\n",
-      FIRMWARE_VERSION, latestVersion.c_str());
     return false;
   }
 
