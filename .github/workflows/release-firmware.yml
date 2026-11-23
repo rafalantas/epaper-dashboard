@@ -2,6 +2,9 @@
 name: Build and publish firmware
 
 on:
+  pull_request:
+    branches:
+      - main
   push:
     branches:
       - main
