@@ -225,7 +225,7 @@ void goToSleep(uint64_t seconds) {
   if (g_awakeStartUs != 0) {
     rtc_lastAwakeMs = (uint32_t)((esp_timer_get_time() - g_awakeStartUs) / 1000ULL);
     rtc_totalAwakeMs += rtc_lastAwakeMs;
-    Serial.printf("DUTY: awake=%lu ms wifi=%lu ms totals awake=%llu ms wifi=%llu ms (no current measurement)\\n",
+    Serial.printf("DUTY: awake=%lu ms wifi=%lu ms totals awake=%llu ms wifi=%llu ms (no current measurement)\n",
       (unsigned long)rtc_lastAwakeMs, (unsigned long)rtc_lastWifiMs,
       (unsigned long long)rtc_totalAwakeMs, (unsigned long long)rtc_totalWifiMs);
     g_awakeStartUs = 0;
@@ -1498,6 +1498,7 @@ void drawNightScreen(const struct tm& nowTm) {
 void setup() {
   Serial.begin(115200);
   g_awakeStartUs = esp_timer_get_time();
+  rtc_lastWifiMs = 0;
   rtc_bootCount++;
   // Okno serwisowe na Upload tylko po zasilaniu/resecie, nie po kazdym budzeniu ze snu.
   if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_UNDEFINED) delay(3000);
@@ -1555,6 +1556,7 @@ void setup() {
       }
       if (tmp.tm_year <= 100) {
         Serial.println("NTP: zegar niewazny, zachowuje ekran i ide spac");
+        recordWifiActivity();
         WiFi.disconnect(true); WiFi.mode(WIFI_OFF);
         goToSleep(normalSleep);
         return;
@@ -1629,7 +1631,7 @@ void setup() {
       if (rtc_otaFailureCount < 4) rtc_otaFailureCount++;
       const uint32_t backoffHours = min(48UL << (rtc_otaFailureCount - 1), 384UL);
       rtc_otaRetryAfter = now + (time_t)backoffHours * 3600;
-      Serial.printf("OTA: retry za %lu h (failure=%u)\\n",
+      Serial.printf("OTA: retry za %lu h (failure=%u)\n",
         (unsigned long)backoffHours, (unsigned)rtc_otaFailureCount);
     }
     if (!checkedVersion.isEmpty()) {
