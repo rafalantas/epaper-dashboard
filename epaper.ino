@@ -1597,13 +1597,16 @@ void setup() {
   if (!nightMode) {
     bool s = fetchState();
     bool p = loadPrices(currentHour, nowTm.tm_yday);
-    if (s && p) {
+
+    // Ceny sa dodatkiem do dashboardu, a nie warunkiem jego wyswietlenia.
+    // Brak /api/prices nie moze blokowac aktualnych danych PV, baterii i przeplywow.
+    if (s) {
       drawScreen();
       rtc_dashboardDrawn = true;
+      if (!p) Serial.println("prices: niedostepne - rysuje dashboard bez aktualnych danych cenowych");
     } else if (!rtc_dashboardDrawn) {
-      // Brak poprzedniego dashboardu na ekranie - pokaz blad. W innym wypadku
-      // zostaje ostatni obraz (e-papier go trzyma).
-      drawMsg("Blad pobierania!", !s ? "/api/state" : "/api/prices");
+      // Bez aktualnego /api/state nie mamy danych do narysowania dashboardu.
+      drawMsg("Blad pobierania!", "/api/state");
     } else {
       Serial.printf("Fetch failed (state=%d prices=%d) - zostawiam poprzedni obraz\n", s, p);
     }
