@@ -819,7 +819,7 @@ struct CachedPrice {
 };
 RTC_DATA_ATTR CachedPrice rtc_prices[48];
 RTC_DATA_ATTR int         rtc_priceCount = 0;
-RTC_DATA_ATTR int         rtc_priceAttemptSlot = -1;  // ostatnia godzina proby pobrania
+RTC_DATA_ATTR long        rtc_priceAttemptSlot = -1;  // minuta UTC ostatniej proby pobrania
 
 void savePricesToRtc() {
   rtc_priceCount = priceCount;
@@ -1052,11 +1052,14 @@ bool loadPrices(int currentLocalHour, int yday) {
   const bool tomorrowRefreshDue = !cacheHasTomorrow &&
                                   currentLocalHour >= 13 &&
                                   currentLocalHour <= 23;
-  const int attemptSlot = yday * 24 + currentLocalHour;
+  // Retry every 15 minutes while current/tomorrow prices are missing.
+  // The timestamp is stored in RTC memory, so deep-sleep wakeups do not
+  // trigger a request every cycle. The first required fetch remains immediate.
+  const bool retryIntervalElapsed = rtc_priceAttemptSlot < 0 ||
+                                    nowKey - rtc_priceAttemptSlot >= 15;
 
-  if ((initialFetchNeeded || tomorrowRefreshDue) &&
-      rtc_priceAttemptSlot != attemptSlot) {
-    rtc_priceAttemptSlot = attemptSlot;
+  if ((initialFetchNeeded || tomorrowRefreshDue) && retryIntervalElapsed) {
+    rtc_priceAttemptSlot = nowKey;
     if (fetchPricesFromApi()) {
       selectCurrentPrice();
     } else {
