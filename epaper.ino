@@ -528,7 +528,7 @@ String httpGet(const String& url, const char* endpoint) {
     http.setTimeout(10000);
     http.setReuse(false);
     if (!http.begin(url)) {
-      Serial.printf("API: %s nie mozna otworzyc polaczenia\\n", endpoint);
+      Serial.printf("API: %s nie mozna otworzyc polaczenia\n", endpoint);
       return "";
     }
 
@@ -541,7 +541,7 @@ String httpGet(const String& url, const char* endpoint) {
     const uint32_t elapsedMs = millis() - startedMs;
     http.end();
 
-    Serial.printf("API: %s HTTP %d (%s), proba=%d, czas=%lu ms\\n",
+    Serial.printf("API: %s HTTP %d (%s), proba=%d, czas=%lu ms\n",
       endpoint, status, HTTPClient::errorToString(status).c_str(),
       attempt, (unsigned long)elapsedMs);
 
@@ -551,7 +551,7 @@ String httpGet(const String& url, const char* endpoint) {
       return "";
     }
 
-    Serial.printf("API: %s read timeout - ponawiam za 700 ms\\n", endpoint);
+    Serial.printf("API: %s read timeout - ponawiam za 700 ms\n", endpoint);
     delay(700);
   }
 
@@ -997,7 +997,7 @@ bool fetchPricesFromApi() {
 
     const float value = slot["price"].as<float>();
     if (!isfinite(value) || value < -10000.0f || value > 100000.0f) {
-      Serial.printf("prices: cena poza zakresem (%.3f)\\n", value);
+      Serial.printf("prices: cena poza zakresem (%.3f)\n", value);
       return false;
     }
 
@@ -1016,7 +1016,7 @@ bool fetchPricesFromApi() {
   }
 
   if (n < 12) {
-    Serial.printf("prices: za malo opublikowanych cen (%d)\\n", n);
+    Serial.printf("prices: za malo opublikowanych cen (%d)\n", n);
     return false;
   }
 
