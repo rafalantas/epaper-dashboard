@@ -807,27 +807,61 @@ static int daysInMonth(int year, int month) {
   return days[month - 1];
 }
 
-// Existing API contract is UTC timestamps, optionally suffixed with Z.
-// Reject numeric offsets rather than silently shifting a displayed price hour.
+// Pstryk returns ISO-8601 timestamps. Accept UTC (Z), no suffix,
+// fractional seconds, and explicit numeric offsets; normalize all to UTC
+// before building price keys so the displayed hour is never shifted.
 static bool parsePriceStartUtc(const char* value, int& year, int& month,
                                int& day, int& hour, int& minute, int& second) {
   if (value == nullptr) return false;
   int consumed = 0;
   const int fields = sscanf(value, "%4d-%2d-%2dT%2d:%2d:%2d%n",
                             &year, &month, &day, &hour, &minute, &second, &consumed);
-  if (fields != 6) return false;
+  if (fields != 6 || year < 2024 || year > 2100 ||
+      month < 1 || month > 12 || day < 1 || day > daysInMonth(year, month) ||
+      hour < 0 || hour > 23 || minute < 0 || minute > 59 ||
+      second < 0 || second > 59) return false;
+
   const char* suffix = value + consumed;
+  if (*suffix == '.') {
+    suffix++;
+    if (*suffix < '0' || *suffix > '9') return false;
+    while (*suffix >= '0' && *suffix <= '9') suffix++;
+  }
+
+  int offsetMinutes = 0;
   if (*suffix == 'Z' && suffix[1] == '\0') {
-    // Explicit UTC marker.
+    // UTC.
+  } else if (*suffix == '+' || *suffix == '-') {
+    const int sign = (*suffix == '+') ? 1 : -1;
+    int offsetHour = 0, offsetMinute = 0, offsetConsumed = 0;
+    if (sscanf(suffix + 1, "%2d:%2d%n", &offsetHour, &offsetMinute, &offsetConsumed) != 2 ||
+        suffix[1 + offsetConsumed] != '\0' ||
+        offsetHour > 14 || offsetMinute > 59 ||
+        (offsetHour == 14 && offsetMinute != 0)) return false;
+    offsetMinutes = sign * (offsetHour * 60 + offsetMinute);
   } else if (*suffix != '\0') {
     return false;
   }
-  return year >= 2024 && year <= 2100 &&
-         month >= 1 && month <= 12 &&
-         day >= 1 && day <= daysInMonth(year, month) &&
-         hour >= 0 && hour <= 23 &&
-         minute >= 0 && minute <= 59 &&
-         second >= 0 && second <= 59;
+
+  // Convert the local timestamp represented by the offset into UTC.
+  int totalMinutes = hour * 60 + minute - offsetMinutes;
+  while (totalMinutes < 0) {
+    totalMinutes += 1440;
+    if (--day < 1) {
+      if (--month < 1) { month = 12; --year; }
+      day = daysInMonth(year, month);
+    }
+  }
+  while (totalMinutes >= 1440) {
+    totalMinutes -= 1440;
+    if (++day > daysInMonth(year, month)) {
+      day = 1;
+      if (++month > 12) { month = 1; ++year; }
+    }
+  }
+  hour = totalMinutes / 60;
+  minute = totalMinutes % 60;
+  return year >= 2024 && year <= 2100;
 }
 
 static long long priceValidationMinute(int year, int month, int day,
@@ -874,11 +908,8 @@ bool fetchPricesFromApi() {
   int n = 0;
 
   for (JsonObject slot : arr) {
-    if (!slot["price"].is<float>() ||
-        !slot["isCheap"].is<bool>() ||
-        !slot["isExpensive"].is<bool>() ||
-        !slot["start"].is<const char*>()) {
-      Serial.println("prices: brak wymaganych pol");
+    if (!slot["price"].is<float>() || !slot["start"].is<const char*>()) {
+      Serial.println("prices: brak ceny lub czasu poczatku slotu");
       return false;
     }
 
@@ -906,8 +937,10 @@ bool fetchPricesFromApi() {
     newPrice[n] = value;
     newHour[n] = (int8_t)localHour;
     newKey[n] = utcTimeKey(Y, Mo, D, h, m);
-    newCheap[n] = slot["isCheap"].as<bool>();
-    newExpensive[n] = slot["isExpensive"].as<bool>();
+    // Classification flags are optional metadata. Missing flags must not
+    // invalidate the complete hourly price series.
+    newCheap[n] = slot["isCheap"] | false;
+    newExpensive[n] = slot["isExpensive"] | false;
     if (newCheap[n] && newExpensive[n]) {
       Serial.println("prices: slot nie moze byc jednoczesnie tani i drogi");
       return false;
