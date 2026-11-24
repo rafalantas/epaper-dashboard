@@ -519,26 +519,43 @@ bool connectWiFi() {
 }
 
 // ─── HTTP GET ─────────────────────────────────────────────────────────────────
-String httpGet(const String& url) {
-  HTTPClient http;
-  http.setConnectTimeout(5000);
-  http.setTimeout(10000);
-  http.setReuse(false);
-  if (!http.begin(url)) {
-    Serial.println("API: nie mozna otworzyc polaczenia");
-    return "";
+// Ponawiaj tylko chwilowy timeout odczytu. Kazda proba dostaje nowy HTTPClient,
+// a bledy HTTP (np. 4xx) nie sa ponawiane.
+String httpGet(const String& url, const char* endpoint) {
+  for (int attempt = 1; attempt <= 2; ++attempt) {
+    HTTPClient http;
+    http.setConnectTimeout(5000);
+    http.setTimeout(10000);
+    http.setReuse(false);
+    if (!http.begin(url)) {
+      Serial.printf("API: %s nie mozna otworzyc polaczenia\n", endpoint);
+      return "";
+    }
+
+    const uint32_t startedMs = millis();
+    const int status = http.GET();
+    String body;
+    if (status == HTTP_CODE_OK) {
+      body = http.getString();
+    }
+    const uint32_t elapsedMs = millis() - startedMs;
+    http.end();
+
+    Serial.printf("API: %s HTTP %d (%s), proba=%d, czas=%lu ms\n",
+      endpoint, status, HTTPClient::errorToString(status).c_str(),
+      attempt, (unsigned long)elapsedMs);
+
+    if (status == HTTP_CODE_OK) return body;
+
+    if (status != HTTPC_ERROR_READ_TIMEOUT || attempt == 2) {
+      return "";
+    }
+
+    Serial.printf("API: %s read timeout - ponawiam za 700 ms\n", endpoint);
+    delay(700);
   }
 
-  const int status = http.GET();
-  String body;
-  if (status == HTTP_CODE_OK) {
-    body = http.getString();
-  } else {
-    Serial.printf("API: HTTP %d (%s) dla endpointu\n",
-      status, HTTPClient::errorToString(status).c_str());
-  }
-  http.end();
-  return body;
+  return "";
 }
 
 // Open-Meteo is a public API and does not require a key. Keep failures visible
@@ -697,7 +714,7 @@ void drawWeatherIcon(int x, int y, int code) {
 
 // ─── Fetch /api/state ─────────────────────────────────────────────────────────
 bool fetchState() {
-  String body = httpGet(deviceSettings.apiHost + "/api/state");
+  String body = httpGet(deviceSettings.apiHost + "/api/state", "/api/state");
   if (body.isEmpty()) return false;
   // The server returns many fields (including a second device). Keep only the
   // values used by this display so the response fits in the ESP32's JSON pool.
@@ -746,7 +763,7 @@ bool fetchEfficiency() {
 
   // 1. /api/energy?period=day — efficiency (83.8%) i totalKwh (produkcja dzienna)
   {
-    String body = httpGet(deviceSettings.apiHost + "/api/energy?period=day");
+    String body = httpGet(deviceSettings.apiHost + "/api/energy?period=day", "/api/energy?period=day");
     if (!body.isEmpty()) {
       StaticJsonDocument<128> filter;
       filter["totalKwh"] = true;
@@ -762,7 +779,7 @@ bool fetchEfficiency() {
 
   // 2. /api/efficiency — forecastKwh (prognoza)
   {
-    String body = httpGet(deviceSettings.apiHost + "/api/efficiency");
+    String body = httpGet(deviceSettings.apiHost + "/api/efficiency", "/api/efficiency");
     if (!body.isEmpty()) {
       StaticJsonDocument<128> filter;
       filter["forecastKwh"] = true;
@@ -918,7 +935,7 @@ static long long priceValidationMinute(int year, int month, int day,
 
 bool fetchPricesFromApi() {
   // One request per hourly attempt slot; loadPrices() handles a later retry.
-  String body = httpGet(deviceSettings.apiHost + "/api/prices");
+  String body = httpGet(deviceSettings.apiHost + "/api/prices", "/api/prices");
   if (body.isEmpty()) { Serial.println("prices: brak odpowiedzi"); return false; }
 
   StaticJsonDocument<256> filter;
@@ -980,7 +997,7 @@ bool fetchPricesFromApi() {
 
     const float value = slot["price"].as<float>();
     if (!isfinite(value) || value < -10000.0f || value > 100000.0f) {
-      Serial.printf("prices: cena poza zakresem (%.3f)\\n", value);
+      Serial.printf("prices: cena poza zakresem (%.3f)\n", value);
       return false;
     }
 
@@ -999,7 +1016,7 @@ bool fetchPricesFromApi() {
   }
 
   if (n < 12) {
-    Serial.printf("prices: za malo opublikowanych cen (%d)\\n", n);
+    Serial.printf("prices: za malo opublikowanych cen (%d)\n", n);
     return false;
   }
 
