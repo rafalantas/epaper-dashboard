@@ -612,7 +612,37 @@ bool fetchWeather() {
   return true;
 }
 
-// Compact monochrome weather pictograms sized for the existing 800x480 footer.
+// Monochrome weather icons for the 800x480 e-paper footer.
+// The cloud is drawn as a solid, clean silhouette with a white inset;
+// weather details use a heavier stroke so they survive e-paper refresh.
+void drawWeatherCloud(int x, int y) {
+  epd.fillCircle(x + 9, y + 15, 6, TFT_BLACK);
+  epd.fillCircle(x + 17, y + 11, 8, TFT_BLACK);
+  epd.fillCircle(x + 25, y + 15, 6, TFT_BLACK);
+  epd.fillRect(x + 8, y + 14, 18, 8, TFT_BLACK);
+
+  epd.fillCircle(x + 9, y + 14, 4, TFT_WHITE);
+  epd.fillCircle(x + 17, y + 11, 6, TFT_WHITE);
+  epd.fillCircle(x + 25, y + 14, 4, TFT_WHITE);
+  epd.fillRect(x + 11, y + 15, 12, 5, TFT_WHITE);
+  epd.drawLine(x + 5, y + 20, x + 29, y + 20, TFT_BLACK);
+  epd.drawLine(x + 7, y + 21, x + 27, y + 21, TFT_BLACK);
+}
+
+void drawWeatherSun(int x, int y, int radius) {
+  const int cx = x + 17, cy = y + 11;
+  epd.fillCircle(cx, cy, radius, TFT_BLACK);
+  epd.fillCircle(cx, cy, radius - 2, TFT_WHITE);
+  epd.drawLine(cx, cy - radius - 5, cx, cy - radius - 2, TFT_BLACK);
+  epd.drawLine(cx, cy + radius + 2, cx, cy + radius + 5, TFT_BLACK);
+  epd.drawLine(cx - radius - 5, cy, cx - radius - 2, cy, TFT_BLACK);
+  epd.drawLine(cx + radius + 2, cy, cx + radius + 5, cy, TFT_BLACK);
+  epd.drawLine(cx - radius - 4, cy - radius - 4, cx - radius - 2, cy - radius - 2, TFT_BLACK);
+  epd.drawLine(cx + radius + 2, cy - radius - 2, cx + radius + 4, cy - radius - 4, TFT_BLACK);
+  epd.drawLine(cx - radius - 4, cy + radius + 4, cx - radius - 2, cy + radius + 2, TFT_BLACK);
+  epd.drawLine(cx + radius + 2, cy + radius + 2, cx + radius + 4, cy + radius + 4, TFT_BLACK);
+}
+
 void drawWeatherIcon(int x, int y, int code) {
   const bool clear = code == 0;
   const bool partly = code == 1 || code == 2;
@@ -621,37 +651,47 @@ void drawWeatherIcon(int x, int y, int code) {
   const bool rain = code == 61 || code == 63 || code == 65 || code == 66 || code == 67 || code == 80 || code == 81 || code == 82;
   const bool snow = code == 71 || code == 73 || code == 75 || code == 77 || code == 85 || code == 86;
   const bool storm = code == 95 || code == 96 || code == 99;
-  if (clear || partly) {
-    epd.drawCircle(x + 17, y + 7, 5, TFT_BLACK);
-    epd.drawLine(x + 17, y, x + 17, y - 3, TFT_BLACK);
-    epd.drawLine(x + 17, y + 14, x + 17, y + 17, TFT_BLACK);
-    epd.drawLine(x + 10, y + 7, x + 7, y + 7, TFT_BLACK);
-    epd.drawLine(x + 24, y + 7, x + 27, y + 7, TFT_BLACK);
-    if (clear) return;
-  }
-  if (fog) {
-    epd.drawLine(x + 2, y + 7, x + 25, y + 7, TFT_BLACK);
-    epd.drawLine(x, y + 12, x + 22, y + 12, TFT_BLACK);
-    epd.drawLine(x + 3, y + 17, x + 25, y + 17, TFT_BLACK);
+
+  if (clear) {
+    drawWeatherSun(x, y + 2, 7);
     return;
   }
-  epd.drawCircle(x + 8, y + 14, 5, TFT_BLACK);
-  epd.drawCircle(x + 15, y + 10, 7, TFT_BLACK);
-  epd.drawCircle(x + 22, y + 14, 5, TFT_BLACK);
-  epd.drawLine(x + 4, y + 19, x + 26, y + 19, TFT_BLACK);
+
+  if (partly) {
+    drawWeatherSun(x + 3, y - 1, 5);
+    drawWeatherCloud(x, y + 8);
+    return;
+  }
+
+  if (fog) {
+    epd.drawLine(x + 3, y + 8, x + 29, y + 8, TFT_BLACK);
+    epd.drawLine(x + 1, y + 14, x + 25, y + 14, TFT_BLACK);
+    epd.drawLine(x + 5, y + 20, x + 30, y + 20, TFT_BLACK);
+    epd.drawLine(x + 3, y + 9, x + 29, y + 9, TFT_BLACK);
+    return;
+  }
+
+  drawWeatherCloud(x, y + 1);
+
   if (storm) {
-    epd.drawLine(x + 15, y + 19, x + 11, y + 25, TFT_BLACK);
-    epd.drawLine(x + 11, y + 25, x + 17, y + 25, TFT_BLACK);
-    epd.drawLine(x + 17, y + 25, x + 13, y + 30, TFT_BLACK);
+    epd.fillTriangle(x + 17, y + 20, x + 11, y + 29, x + 17, y + 28, TFT_BLACK);
+    epd.fillTriangle(x + 17, y + 25, x + 22, y + 25, x + 13, y + 34, TFT_BLACK);
   } else if (snow) {
-    epd.drawLine(x + 9, y + 22, x + 9, y + 28, TFT_BLACK);
-    epd.drawLine(x + 6, y + 25, x + 12, y + 25, TFT_BLACK);
-    epd.drawLine(x + 19, y + 22, x + 19, y + 28, TFT_BLACK);
-    epd.drawLine(x + 16, y + 25, x + 22, y + 25, TFT_BLACK);
+    const int sx[2] = {x + 10, x + 23};
+    for (int i = 0; i < 2; ++i) {
+      const int px = sx[i], py = y + 28;
+      epd.drawLine(px - 4, py, px + 4, py, TFT_BLACK);
+      epd.drawLine(px, py - 4, px, py + 4, TFT_BLACK);
+      epd.drawLine(px - 3, py - 3, px + 3, py + 3, TFT_BLACK);
+      epd.drawLine(px - 3, py + 3, px + 3, py - 3, TFT_BLACK);
+    }
   } else if (rain || drizzle) {
-    epd.drawLine(x + 8, y + 22, x + 5, y + 27, TFT_BLACK);
-    epd.drawLine(x + 17, y + 22, x + 14, y + 27, TFT_BLACK);
-    if (rain) epd.drawLine(x + 24, y + 22, x + 21, y + 27, TFT_BLACK);
+    const int drops = drizzle ? 2 : 3;
+    for (int i = 0; i < drops; ++i) {
+      const int dx = x + 8 + i * 8;
+      epd.drawLine(dx + 1, y + 25, dx - 2, y + 30, TFT_BLACK);
+      epd.drawLine(dx + 2, y + 25, dx - 1, y + 30, TFT_BLACK);
+    }
   }
 }
 
