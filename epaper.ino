@@ -927,22 +927,36 @@ bool fetchPricesFromApi() {
   return true;
 }
 
-// Ceny zmieniaja sie raz na dobe (jutrzejsze ok. 13:00), wiec cache w RTC wystarcza.
-// Pobieramy gdy: cache pusty/nieaktualny, albo pokrywa mniej niz 12 h do przodu
-// (czekamy na jutrzejsze) - ale nie czesciej niz raz na godzine.
+// Ceny na dzis sa dostepne od rana, a ceny na jutro pojawiaja sie
+// zwykle miedzy 13:00 a 15:00. Nie odpytujemy API co 5 minut ani przed
+// publikacja jutra: probujemy raz na godzine w oknie 13:00-17:00.
+// Gdy cache jest pusty lub nie zawiera biezacej godziny, wykonujemy probe
+// od razu. Nie kasujemy ostatniego poprawnego cache po bledzie API.
 bool loadPrices(int currentLocalHour, int yday) {
   loadPricesFromRtc();
   selectCurrentPrice();
 
   const long nowKey = nowUtcKey();
   const long lastKey = priceCount > 0 ? priceKey[priceCount - 1] : 0;
-  const bool needFetch = currentPriceIdx < 0 || (lastKey - nowKey) < 12 * 60;
+  const bool cacheHasCurrentPrice = currentPriceIdx >= 0;
+  const bool cacheHasTomorrow = priceCount > 0 && (lastKey - nowKey) >= 12 * 60;
+
+  const bool initialFetchNeeded = !cacheHasCurrentPrice;
+  const bool tomorrowRefreshDue = !cacheHasTomorrow &&
+                                  currentLocalHour >= 13 &&
+                                  currentLocalHour <= 17;
   const int attemptSlot = yday * 24 + currentLocalHour;
 
-  if (needFetch && rtc_priceAttemptSlot != attemptSlot) {
+  if ((initialFetchNeeded || tomorrowRefreshDue) &&
+      rtc_priceAttemptSlot != attemptSlot) {
     rtc_priceAttemptSlot = attemptSlot;
-    if (fetchPricesFromApi()) selectCurrentPrice();
-    else if (currentPriceIdx < 0) priceCount = 0;  // cache bezuzyteczny
+    if (fetchPricesFromApi()) {
+      selectCurrentPrice();
+    } else {
+      // Zachowaj cache: dzisiejsze ceny nadal sa przydatne, nawet gdy
+      // publikacja jutrzejszych danych jeszcze sie opoznia.
+      Serial.println("prices: pozostawiam ostatni poprawny cache");
+    }
   }
   return priceCount > 0;
 }
