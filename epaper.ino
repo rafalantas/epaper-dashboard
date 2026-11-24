@@ -977,7 +977,7 @@ bool fetchPricesFromApi() {
 
 // Ceny na dzis sa dostepne od rana, a ceny na jutro pojawiaja sie
 // zwykle miedzy 13:00 a 15:00. Nie odpytujemy API co 5 minut ani przed
-// publikacja jutra: probujemy raz na godzine w oknie 13:00-17:00.
+// publikacja jutra: probujemy raz na godzine od 13:00 do 23:00.
 // Gdy cache jest pusty lub nie zawiera biezacej godziny, wykonujemy probe
 // od razu. Nie kasujemy ostatniego poprawnego cache po bledzie API.
 bool loadPrices(int currentLocalHour, int yday) {
@@ -994,7 +994,7 @@ bool loadPrices(int currentLocalHour, int yday) {
   const bool initialFetchNeeded = !cacheHasCurrentPrice;
   const bool tomorrowRefreshDue = !cacheHasTomorrow &&
                                   currentLocalHour >= 13 &&
-                                  currentLocalHour <= 17;
+                                  currentLocalHour <= 23;
   const int attemptSlot = yday * 24 + currentLocalHour;
 
   if ((initialFetchNeeded || tomorrowRefreshDue) &&
