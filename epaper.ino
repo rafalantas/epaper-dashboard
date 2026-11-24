@@ -905,17 +905,12 @@ bool fetchPricesFromApi() {
   long newKey[48];
   bool newCheap[48], newExpensive[48];
   long long previousMinute = -1;
+  bool unpublishedTailStarted = false;
   int n = 0;
 
   for (JsonObject slot : arr) {
-    if (!slot["price"].is<float>() || !slot["start"].is<const char*>()) {
-      Serial.println("prices: brak ceny lub czasu poczatku slotu");
-      return false;
-    }
-
-    const float value = slot["price"].as<float>();
-    if (!isfinite(value) || value < -10000.0f || value > 100000.0f) {
-      Serial.printf("prices: cena poza zakresem (%.3f)\n", value);
+    if (!slot["start"].is<const char*>()) {
+      Serial.println("prices: brak czasu poczatku slotu");
       return false;
     }
 
@@ -932,13 +927,28 @@ bool fetchPricesFromApi() {
     }
     previousMinute = minuteKey;
 
+    // Pstryk publishes tomorrow's hours later. Keep the valid prefix and
+    // ignore only trailing slots whose price is explicitly null.
+    if (slot["price"].isNull()) {
+      unpublishedTailStarted = true;
+      continue;
+    }
+    if (!slot["price"].is<float>() || unpublishedTailStarted) {
+      Serial.println("prices: nieprawidlowa cena lub luka przed kolejnym slotem");
+      return false;
+    }
+
+    const float value = slot["price"].as<float>();
+    if (!isfinite(value) || value < -10000.0f || value > 100000.0f) {
+      Serial.printf("prices: cena poza zakresem (%.3f)\\n", value);
+      return false;
+    }
+
     int localHour = (h + (int)(g_utcOffsetSec / 3600)) % 24;
     if (localHour < 0) localHour += 24;
     newPrice[n] = value;
     newHour[n] = (int8_t)localHour;
     newKey[n] = utcTimeKey(Y, Mo, D, h, m);
-    // Classification flags are optional metadata. Missing flags must not
-    // invalidate the complete hourly price series.
     newCheap[n] = slot["isCheap"] | false;
     newExpensive[n] = slot["isExpensive"] | false;
     if (newCheap[n] && newExpensive[n]) {
@@ -946,6 +956,11 @@ bool fetchPricesFromApi() {
       return false;
     }
     n++;
+  }
+
+  if (n < 12) {
+    Serial.printf("prices: za malo opublikowanych cen (%d)\\n", n);
+    return false;
   }
 
   for (int i = 0; i < n; i++) {
@@ -972,7 +987,9 @@ bool loadPrices(int currentLocalHour, int yday) {
   const long nowKey = nowUtcKey();
   const long lastKey = priceCount > 0 ? priceKey[priceCount - 1] : 0;
   const bool cacheHasCurrentPrice = currentPriceIdx >= 0;
-  const bool cacheHasTomorrow = priceCount > 0 && (lastKey - nowKey) >= 12 * 60;
+  // Today's final slot starts at midnight tomorrow. Require a full next-day
+  // horizon so that this boundary is not mistaken for published tomorrow.
+  const bool cacheHasTomorrow = priceCount > 0 && (lastKey - nowKey) >= 24 * 60;
 
   const bool initialFetchNeeded = !cacheHasCurrentPrice;
   const bool tomorrowRefreshDue = !cacheHasTomorrow &&
