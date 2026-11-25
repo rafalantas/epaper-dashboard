@@ -367,88 +367,69 @@ void drawBadge(int x, int y, int w, int h, const char* text, bool filled) {
   epd.setTextColor(TFT_BLACK, TFT_WHITE);
 }
 
-// ─── Ikony bitmap 16x16 ───────────────────────────────────────────────────────
-const uint8_t ICON_SUN[] = {
-  0b00010000,0b00001000,
-  0b00001000,0b00010000,
-  0b00000001,0b10000000,
-  0b00100110,0b01100100,
-  0b01000100,0b00100010,
-  0b00011000,0b00011000,
-  0b11110000,0b00001111,
-  0b11110000,0b00001111,
-  0b00011000,0b00011000,
-  0b01000100,0b00100010,
-  0b00100110,0b01100100,
-  0b00000001,0b10000000,
-  0b00001000,0b00010000,
-  0b00010000,0b00001000,
-  0b00000000,0b00000000,
-  0b00000000,0b00000000,
-};
-const uint8_t ICON_BAT[] = {
-  0b00000001,0b11000000,
-  0b00000001,0b11000000,
-  0b01111111,0b11111110,
-  0b01000000,0b00000010,
-  0b01011111,0b11111010,
-  0b01011111,0b11111010,
-  0b01011111,0b11111010,
-  0b01011111,0b11111010,
-  0b01011111,0b11111010,
-  0b01011111,0b11111010,
-  0b01000000,0b00000010,
-  0b01111111,0b11111110,
-  0b00000000,0b00000000,
-  0b00000000,0b00000000,
-  0b00000000,0b00000000,
-  0b00000000,0b00000000,
-};
-const uint8_t ICON_HOME[] = {
-  0b00000001,0b10000000,
-  0b00000011,0b11000000,
-  0b00000111,0b11100000,
-  0b00001111,0b11110000,
-  0b00011111,0b11111000,
-  0b00111111,0b11111100,
-  0b01111111,0b11111110,
-  0b00011111,0b11111000,
-  0b00011001,0b10011000,
-  0b00011001,0b10011000,
-  0b00011001,0b10011000,
-  0b00011111,0b11111000,
-  0b00011111,0b11111000,
-  0b00000000,0b00000000,
-  0b00000000,0b00000000,
-  0b00000000,0b00000000,
-};
-const uint8_t ICON_GRID[] = {
-  0b00000111,0b10000000,
-  0b00001111,0b00000000,
-  0b00011110,0b00000000,
-  0b00111100,0b00000000,
-  0b01111111,0b11000000,
-  0b00001111,0b10000000,
-  0b00011111,0b00000000,
-  0b00111110,0b00000000,
-  0b01111100,0b00000000,
-  0b00111111,0b11100000,
-  0b00000111,0b10000000,
-  0b00001111,0b00000000,
-  0b00000110,0b00000000,
-  0b00000000,0b00000000,
-  0b00000000,0b00000000,
-  0b00000000,0b00000000,
-};
-
-
-
-void drawIcon(int x, int y, const uint8_t* icon) {
-  for (int row = 0; row < 16; row++) {
-    uint16_t bits = ((uint16_t)icon[row*2] << 8) | icon[row*2+1];
-    for (int col = 0; col < 16; col++) {
-      if (bits & (0x8000 >> col)) epd.drawPixel(x+col, y+row, TFT_BLACK);
-    }
+// ─── Wlasne ikony wektorowe dla monochromatycznego e-papieru ────────────────
+// Grube, proste ksztalty pozostaja czytelne po odswiezeniu panelu 800x480.
+void drawSolarIcon(int x, int y) {
+  // Panel PV z podzialem na ogniwa i sloncem.
+  epd.drawLine(x+3,y+17,x+23,y+17,TFT_BLACK);
+  epd.drawLine(x+6,y+7,x+25,y+7,TFT_BLACK);
+  epd.drawLine(x+3,y+17,x+6,y+7,TFT_BLACK);
+  epd.drawLine(x+23,y+17,x+25,y+7,TFT_BLACK);
+  epd.drawLine(x+10,y+7,x+9,y+17,TFT_BLACK);
+  epd.drawLine(x+18,y+7,x+19,y+17,TFT_BLACK);
+  epd.drawLine(x+5,y+12,x+24,y+12,TFT_BLACK);
+  epd.drawLine(x+13,y+17,x+13,y+22,TFT_BLACK);
+  epd.drawLine(x+9,y+22,x+18,y+22,TFT_BLACK);
+  epd.drawCircle(x+21,y+3,3,TFT_BLACK);
+  epd.drawLine(x+21,y-2,x+21,y-1,TFT_BLACK);
+  epd.drawLine(x+16,y+3,x+17,y+3,TFT_BLACK);
+}
+void drawBatteryIcon(int x, int y, int w, int h, float pct) {
+  pct=max(0.0f,min(100.0f,pct));
+  epd.drawRect(x,y,w-4,h,TFT_BLACK);
+  epd.fillRect(x+w-3,y+h/3,3,h/3,TFT_BLACK);
+  int innerW=w-8;
+  int fill=(int)(innerW*pct/100.0f);
+  if(fill>0) epd.fillRect(x+2,y+2,fill,h-4,TFT_BLACK);
+}
+void drawHomeIcon(int x, int y) {
+  epd.drawLine(x+2,y+13,x+13,y+3,TFT_BLACK);
+  epd.drawLine(x+13,y+3,x+25,y+13,TFT_BLACK);
+  epd.drawLine(x+5,y+11,x+5,y+24,TFT_BLACK);
+  epd.drawLine(x+5,y+24,x+22,y+24,TFT_BLACK);
+  epd.drawLine(x+22,y+24,x+22,y+11,TFT_BLACK);
+  epd.fillTriangle(x+14,y+9,x+10,y+17,x+14,y+16,TFT_BLACK);
+  epd.fillTriangle(x+14,y+16,x+18,y+16,x+12,y+23,TFT_BLACK);
+}
+void drawGridIcon(int x, int y) {
+  epd.drawLine(x+13,y+2,x+3,y+25,TFT_BLACK);
+  epd.drawLine(x+13,y+2,x+23,y+25,TFT_BLACK);
+  epd.drawLine(x+7,y+16,x+19,y+16,TFT_BLACK);
+  epd.drawLine(x+5,y+21,x+21,y+21,TFT_BLACK);
+  epd.drawLine(x+8,y+11,x+18,y+11,TFT_BLACK);
+  epd.drawLine(x+3,y+25,x+23,y+25,TFT_BLACK);
+  epd.drawLine(x+6,y+8,x+20,y+8,TFT_BLACK);
+  epd.drawLine(x+2,y+8,x+24,y+8,TFT_BLACK);
+}
+void drawFlowArrow(int x, int y, bool up) {
+  if(up) {
+    epd.fillTriangle(x+7,y,x,y+9,x+14,y+9,TFT_BLACK);
+    epd.fillRect(x+5,y+7,5,12,TFT_BLACK);
+  } else {
+    epd.fillRect(x+5,y,5,12,TFT_BLACK);
+    epd.fillTriangle(x,y+10,x+14,y+10,x+7,y+19,TFT_BLACK);
+  }
+}
+void drawWifiIcon(int x, int y, bool connected) {
+  if(connected) {
+    epd.drawLine(x,y+5,x+7,y,TFT_BLACK);
+    epd.drawLine(x+7,y,x+14,y+5,TFT_BLACK);
+    epd.drawLine(x+3,y+9,x+7,y+6,TFT_BLACK);
+    epd.drawLine(x+7,y+6,x+11,y+9,TFT_BLACK);
+    epd.fillCircle(x+7,y+13,2,TFT_BLACK);
+  } else {
+    epd.drawLine(x,y,x+14,y+14,TFT_BLACK);
+    epd.drawLine(x+14,y,x,y+14,TFT_BLACK);
   }
 }
 
@@ -1115,8 +1096,8 @@ void drawScreen() {
 
   // PV
   drawCard(10, 10, 190, 125);
-  drawIcon(18, 18, ICON_SUN);
-  epd.setTextSize(1); epd.setCursor(38, 24); epd.print("PV");
+  drawSolarIcon(18, 17);
+  epd.setTextSize(1); epd.setCursor(50, 24); epd.print("PV");
   epd.setTextSize(3); epd.setCursor(18, 48); epd.print(String((int)state.pvTotal));
   epd.setTextSize(2); epd.setCursor(18 + String((int)state.pvTotal).length()*18+2, 55); epd.print("W");
   int pvPct = (int)(state.pvTotal / deviceSettings.pvMaxW * 100.0f);
@@ -1151,9 +1132,9 @@ void drawScreen() {
 
   // Bateria
   drawCard(208, 10, 190, 125);
-  drawIcon(216, 18, ICON_BAT);
-  epd.setTextSize(1); epd.setCursor(236, 24); epd.print("Bateria EcoFlow");
   float batterySoc = state.systemSoc >= 0 && state.systemSoc <= 100 ? state.systemSoc : state.soc;
+  drawBatteryIcon(216, 19, 27, 18, batterySoc);
+  epd.setTextSize(1); epd.setCursor(248, 24); epd.print("Bateria EcoFlow");
   epd.setTextSize(3); epd.setCursor(216, 48); epd.print(String((int)batterySoc));
   epd.setTextSize(2); epd.setCursor(216+String((int)batterySoc).length()*18+2, 55); epd.print("%");
   // Strzalka kierunku + moc + czas
@@ -1174,8 +1155,7 @@ void drawScreen() {
 
   if (batteryCharging) {
     // Strzalka w gore (ladowanie)
-    epd.fillTriangle(arrowX, arrowBot, arrowX+14, arrowBot, arrowX+7, arrowTop, TFT_BLACK);
-    epd.fillRect(arrowX+4, arrowBot-2, 6, 6, TFT_BLACK);
+    drawFlowArrow(arrowX, arrowTop, true);
     epd.setTextSize(1); epd.setCursor(216, 90);
     if (validBatteryRuntime(state.chgRemTime)) {
       char tBuf[20]; snprintf(tBuf, sizeof(tBuf), "pelna za %dh %02dmin", state.chgRemTime/60, state.chgRemTime%60);
@@ -1183,8 +1163,7 @@ void drawScreen() {
     } else { epd.print("laduje " + String(batteryNetPower) + "W"); }
   } else if (batteryDischarging) {
     // Strzalka w dol (rozladowanie)
-    epd.fillTriangle(arrowX, arrowTop, arrowX+14, arrowTop, arrowX+7, arrowBot, TFT_BLACK);
-    epd.fillRect(arrowX+4, arrowTop-4, 6, 6, TFT_BLACK);
+    drawFlowArrow(arrowX, arrowTop, false);
     epd.setTextSize(1); epd.setCursor(216, 90);
     if (validBatteryRuntime(state.dsgRemTime)) {
       char tBuf[20]; snprintf(tBuf, sizeof(tBuf), "zostalo %dh %02dmin", state.dsgRemTime/60, state.dsgRemTime%60);
@@ -1198,8 +1177,8 @@ void drawScreen() {
 
   // Dom
   drawCard(406, 10, 190, 125);
-  drawIcon(414, 18, ICON_HOME);
-  epd.setTextSize(1); epd.setCursor(434, 24); epd.print("Dom");
+  drawHomeIcon(414, 17);
+  epd.setTextSize(1); epd.setCursor(446, 24); epd.print("Dom");
   float loadW = houseLoadW();
   if (loadW != 0 || state.connected) {
     String loadText = String((int)loadW);
@@ -1226,8 +1205,8 @@ void drawScreen() {
 
   // Grid
   drawCard(604, 10, 186, 125);
-  drawIcon(612, 18, ICON_GRID);
-  epd.setTextSize(1); epd.setCursor(632, 24); epd.print("Siec");
+  drawGridIcon(612, 17);
+  epd.setTextSize(1); epd.setCursor(644, 24); epd.print("Siec");
   if (state.feedPower > 20) {
     String val = "+" + String((int)state.feedPower);
     epd.setTextSize(3); epd.setCursor(612, 48); epd.print(val);
@@ -1525,7 +1504,8 @@ void drawScreen() {
   epd.setCursor(447, 447);
   epd.print("Wybudzenie #");
   epd.print(rtc_bootCount);
-  epd.setCursor(447, 464);
+  drawWifiIcon(447, 458, state.connected);
+  epd.setCursor(466, 464);
   epd.print("EcoFlow: ");
   epd.print(state.connected ? "OK" : "brak");
 
@@ -1535,12 +1515,7 @@ void drawScreen() {
   epd.print("BATERIA EKRANU");
   if (state.devBatPct >= 0) {
     const int batteryX = 622, batteryY = 443;
-    epd.drawRect(batteryX, batteryY, 25, 13, TFT_BLACK);
-    epd.fillRect(batteryX + 25, batteryY + 4, 3, 5, TFT_BLACK);
-    const int batteryFill = (int)(21.0f * state.devBatPct / 100.0f);
-    if (batteryFill > 0) {
-      epd.fillRect(batteryX + 2, batteryY + 2, batteryFill, 9, TFT_BLACK);
-    }
+    drawBatteryIcon(batteryX, batteryY, 28, 13, state.devBatPct);
     char batteryLabel[24];
     snprintf(batteryLabel, sizeof(batteryLabel), "%.0f%%  %.2fV",
       state.devBatPct, state.devBatV);
