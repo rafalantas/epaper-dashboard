@@ -1097,7 +1097,7 @@ void drawScreen() {
   // PV
   drawCard(10, 10, 190, 125);
   drawSolarIcon(18, 17);
-  epd.setTextSize(1); epd.setCursor(38, 24); epd.print("PV");
+  epd.setTextSize(1); epd.setCursor(50, 24); epd.print("PV");
   epd.setTextSize(3); epd.setCursor(18, 48); epd.print(String((int)state.pvTotal));
   epd.setTextSize(2); epd.setCursor(18 + String((int)state.pvTotal).length()*18+2, 55); epd.print("W");
   int pvPct = (int)(state.pvTotal / deviceSettings.pvMaxW * 100.0f);
@@ -1133,7 +1133,7 @@ void drawScreen() {
   // Bateria
   drawCard(208, 10, 190, 125);
   drawBatteryIcon(216, 19, 27, 18, batterySoc);
-  epd.setTextSize(1); epd.setCursor(236, 24); epd.print("Bateria EcoFlow");
+  epd.setTextSize(1); epd.setCursor(248, 24); epd.print("Bateria EcoFlow");
   float batterySoc = state.systemSoc >= 0 && state.systemSoc <= 100 ? state.systemSoc : state.soc;
   epd.setTextSize(3); epd.setCursor(216, 48); epd.print(String((int)batterySoc));
   epd.setTextSize(2); epd.setCursor(216+String((int)batterySoc).length()*18+2, 55); epd.print("%");
@@ -1178,7 +1178,7 @@ void drawScreen() {
   // Dom
   drawCard(406, 10, 190, 125);
   drawHomeIcon(414, 17);
-  epd.setTextSize(1); epd.setCursor(434, 24); epd.print("Dom");
+  epd.setTextSize(1); epd.setCursor(446, 24); epd.print("Dom");
   float loadW = houseLoadW();
   if (loadW != 0 || state.connected) {
     String loadText = String((int)loadW);
@@ -1206,7 +1206,7 @@ void drawScreen() {
   // Grid
   drawCard(604, 10, 186, 125);
   drawGridIcon(612, 17);
-  epd.setTextSize(1); epd.setCursor(632, 24); epd.print("Siec");
+  epd.setTextSize(1); epd.setCursor(644, 24); epd.print("Siec");
   if (state.feedPower > 20) {
     String val = "+" + String((int)state.feedPower);
     epd.setTextSize(3); epd.setCursor(612, 48); epd.print(val);
