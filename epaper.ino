@@ -1132,9 +1132,9 @@ void drawScreen() {
 
   // Bateria
   drawCard(208, 10, 190, 125);
+  float batterySoc = state.systemSoc >= 0 && state.systemSoc <= 100 ? state.systemSoc : state.soc;
   drawBatteryIcon(216, 19, 27, 18, batterySoc);
   epd.setTextSize(1); epd.setCursor(248, 24); epd.print("Bateria EcoFlow");
-  float batterySoc = state.systemSoc >= 0 && state.systemSoc <= 100 ? state.systemSoc : state.soc;
   epd.setTextSize(3); epd.setCursor(216, 48); epd.print(String((int)batterySoc));
   epd.setTextSize(2); epd.setCursor(216+String((int)batterySoc).length()*18+2, 55); epd.print("%");
   // Strzalka kierunku + moc + czas
