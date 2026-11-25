@@ -1620,6 +1620,11 @@ void drawNightScreen(const struct tm& nowTm) {
 
 // ─── Setup ────────────────────────────────────────────────────────────────────
 void setup() {
+  // Deep-sleep wake resets the libc environment; restore the local timezone
+  // on every boot, even when SNTP is intentionally not restarted.
+  setenv("TZ", TZ_INFO, 1);
+  tzset();
+
   Serial.begin(115200);
   g_awakeStartUs = esp_timer_get_time();
   rtc_lastWifiMs = 0;
