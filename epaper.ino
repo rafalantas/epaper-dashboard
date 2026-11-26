@@ -1128,7 +1128,7 @@ void drawScreen() {
   }
   // Pasek efektywnosci (lub mocy szczytowej jako fallback)
   float barVal = state.independence > 0 ? state.independence : (float)pvPct;
-  drawBar(18, 112, 168, 8, barVal);
+  drawBar(18, 104, 168, 8, barVal);
 
   // Bateria
   drawCard(208, 10, 190, 125);
