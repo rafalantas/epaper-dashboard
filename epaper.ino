@@ -1183,7 +1183,7 @@ void drawScreen() {
     epd.fillRect(arrowX, arrowMid, 14, 3, TFT_BLACK);
     epd.setTextSize(1); epd.setCursor(216, 90); epd.print("idle");
   }
-  drawBar(216, 104, 168, 8, batterySoc);
+  drawBar(216, 116, 168, 8, batterySoc);
 
   // Dom
   drawCard(406, 10, 190, 125);
@@ -1211,7 +1211,7 @@ void drawScreen() {
   }
   int pvCover = (loadW > 0) ? (int)(max(0.0f, state.loadFromPv) / loadW * 100.0f) : 0;
   pvCover = min(pvCover, 100);
-  drawBar(414, 104, 168, 8, (float)pvCover);
+  drawBar(414, 116, 168, 8, (float)pvCover);
 
   // Grid
   drawCard(604, 10, 186, 125);
@@ -1222,18 +1222,18 @@ void drawScreen() {
     epd.setTextSize(3); epd.setCursor(612, 48); epd.print(val);
     epd.setTextSize(2); epd.setCursor(612+val.length()*18+2, 55); epd.print("W");
     epd.setTextSize(1); epd.setCursor(612, 90); epd.print("eksport");
-    drawBar(612, 104, 164, 8, min(state.feedPower / deviceSettings.pvMaxW * 100.0f, 100.0f));
+    drawBar(612, 116, 164, 8, min(state.feedPower / deviceSettings.pvMaxW * 100.0f, 100.0f));
   } else if (state.fromGrid > 20) {
     String val = String((int)state.fromGrid);
     epd.setTextSize(3); epd.setCursor(612, 48); epd.print(val);
     epd.setTextSize(2); epd.setCursor(612+val.length()*18+2, 55); epd.print("W");
     epd.setTextSize(1); epd.setCursor(612, 90); epd.print("pobor");
-    drawBar(612, 104, 164, 8, min(state.fromGrid / deviceSettings.pvMaxW * 100.0f, 100.0f));
+    drawBar(612, 116, 164, 8, min(state.fromGrid / deviceSettings.pvMaxW * 100.0f, 100.0f));
   } else {
     epd.setTextSize(3); epd.setCursor(612, 48); epd.print("~0");
     epd.setTextSize(2); epd.setCursor(648, 55); epd.print("W");
     epd.setTextSize(1); epd.setCursor(612, 90); epd.print("bilans zerowy");
-    drawBar(612, 104, 164, 8, 0);
+    drawBar(612, 116, 164, 8, 0);
   }
 
   // Separator
