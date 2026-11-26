@@ -367,49 +367,54 @@ void drawBadge(int x, int y, int w, int h, const char* text, bool filled) {
   epd.setTextColor(TFT_BLACK, TFT_WHITE);
 }
 
-// ─── Wlasne ikony wektorowe dla monochromatycznego e-papieru ────────────────
-// Grube, proste ksztalty pozostaja czytelne po odswiezeniu panelu 800x480.
+// ─── Spójny zestaw ikon monochromatycznych dla e-papieru ─────────────────────
+// Wszystkie konturowe symbole używają tej samej, dwupikselowej kreski.
+void drawIconLine(int x1, int y1, int x2, int y2) {
+  epd.drawLine(x1, y1, x2, y2, TFT_BLACK);
+  epd.drawLine(x1+1, y1, x2+1, y2, TFT_BLACK);
+}
 void drawSolarIcon(int x, int y) {
-  // Panel PV z podzialem na ogniwa i sloncem.
-  epd.drawLine(x+3,y+17,x+23,y+17,TFT_BLACK);
-  epd.drawLine(x+6,y+7,x+25,y+7,TFT_BLACK);
-  epd.drawLine(x+3,y+17,x+6,y+7,TFT_BLACK);
-  epd.drawLine(x+23,y+17,x+25,y+7,TFT_BLACK);
-  epd.drawLine(x+10,y+7,x+9,y+17,TFT_BLACK);
-  epd.drawLine(x+18,y+7,x+19,y+17,TFT_BLACK);
-  epd.drawLine(x+5,y+12,x+24,y+12,TFT_BLACK);
-  epd.drawLine(x+13,y+17,x+13,y+22,TFT_BLACK);
-  epd.drawLine(x+9,y+22,x+18,y+22,TFT_BLACK);
+  // Panel PV i słońce — kontury o tej samej grubości co pozostałe symbole.
+  drawIconLine(x+3,y+17,x+23,y+17);
+  drawIconLine(x+6,y+7,x+25,y+7);
+  drawIconLine(x+3,y+17,x+6,y+7);
+  drawIconLine(x+23,y+17,x+25,y+7);
+  drawIconLine(x+10,y+7,x+9,y+17);
+  drawIconLine(x+18,y+7,x+19,y+17);
+  drawIconLine(x+5,y+12,x+24,y+12);
+  drawIconLine(x+13,y+17,x+13,y+22);
+  drawIconLine(x+9,y+22,x+18,y+22);
   epd.drawCircle(x+21,y+3,3,TFT_BLACK);
-  epd.drawLine(x+21,y-2,x+21,y-1,TFT_BLACK);
-  epd.drawLine(x+16,y+3,x+17,y+3,TFT_BLACK);
+  epd.drawPixel(x+21,y-2,TFT_BLACK);
+  epd.drawPixel(x+16,y+3,TFT_BLACK);
 }
 void drawBatteryIcon(int x, int y, int w, int h, float pct) {
   pct=max(0.0f,min(100.0f,pct));
   epd.drawRect(x,y,w-4,h,TFT_BLACK);
+  epd.drawRect(x+1,y+1,w-6,h-2,TFT_BLACK);
   epd.fillRect(x+w-3,y+h/3,3,h/3,TFT_BLACK);
-  int innerW=w-8;
+  int innerW=w-12;
   int fill=(int)(innerW*pct/100.0f);
-  if(fill>0) epd.fillRect(x+2,y+2,fill,h-4,TFT_BLACK);
+  if(fill>0) epd.fillRect(x+3,y+3,fill,max(1,h-6),TFT_BLACK);
 }
 void drawHomeIcon(int x, int y) {
-  epd.drawLine(x+2,y+13,x+13,y+3,TFT_BLACK);
-  epd.drawLine(x+13,y+3,x+25,y+13,TFT_BLACK);
-  epd.drawLine(x+5,y+11,x+5,y+24,TFT_BLACK);
-  epd.drawLine(x+5,y+24,x+22,y+24,TFT_BLACK);
-  epd.drawLine(x+22,y+24,x+22,y+11,TFT_BLACK);
+  drawIconLine(x+2,y+13,x+13,y+3);
+  drawIconLine(x+13,y+3,x+25,y+13);
+  drawIconLine(x+5,y+11,x+5,y+24);
+  drawIconLine(x+5,y+24,x+22,y+24);
+  drawIconLine(x+22,y+24,x+22,y+11);
+  // Błyskawica pozostaje wypełniona jako wspólny akcent wszystkich ikon.
   epd.fillTriangle(x+14,y+9,x+10,y+17,x+14,y+16,TFT_BLACK);
   epd.fillTriangle(x+14,y+16,x+18,y+16,x+12,y+23,TFT_BLACK);
 }
 void drawGridIcon(int x, int y) {
-  epd.drawLine(x+13,y+2,x+3,y+25,TFT_BLACK);
-  epd.drawLine(x+13,y+2,x+23,y+25,TFT_BLACK);
-  epd.drawLine(x+7,y+16,x+19,y+16,TFT_BLACK);
-  epd.drawLine(x+5,y+21,x+21,y+21,TFT_BLACK);
-  epd.drawLine(x+8,y+11,x+18,y+11,TFT_BLACK);
-  epd.drawLine(x+3,y+25,x+23,y+25,TFT_BLACK);
-  epd.drawLine(x+6,y+8,x+20,y+8,TFT_BLACK);
-  epd.drawLine(x+2,y+8,x+24,y+8,TFT_BLACK);
+  drawIconLine(x+13,y+2,x+3,y+25);
+  drawIconLine(x+13,y+2,x+23,y+25);
+  drawIconLine(x+7,y+16,x+19,y+16);
+  drawIconLine(x+5,y+21,x+21,y+21);
+  drawIconLine(x+8,y+11,x+18,y+11);
+  drawIconLine(x+3,y+25,x+23,y+25);
+  drawIconLine(x+2,y+8,x+24,y+8);
 }
 void drawFlowArrow(int x, int y, bool up) {
   if(up) {
@@ -422,14 +427,14 @@ void drawFlowArrow(int x, int y, bool up) {
 }
 void drawWifiIcon(int x, int y, bool connected) {
   if(connected) {
-    epd.drawLine(x,y+5,x+7,y,TFT_BLACK);
-    epd.drawLine(x+7,y,x+14,y+5,TFT_BLACK);
-    epd.drawLine(x+3,y+9,x+7,y+6,TFT_BLACK);
-    epd.drawLine(x+7,y+6,x+11,y+9,TFT_BLACK);
+    drawIconLine(x,y+5,x+7,y);
+    drawIconLine(x+7,y,x+14,y+5);
+    drawIconLine(x+3,y+9,x+7,y+6);
+    drawIconLine(x+7,y+6,x+11,y+9);
     epd.fillCircle(x+7,y+13,2,TFT_BLACK);
   } else {
-    epd.drawLine(x,y,x+14,y+14,TFT_BLACK);
-    epd.drawLine(x+14,y,x,y+14,TFT_BLACK);
+    drawIconLine(x,y,x+14,y+14);
+    drawIconLine(x+14,y,x,y+14);
   }
 }
 
@@ -1094,31 +1099,37 @@ void drawScreen() {
 
   // ── 4 karty górne (y:10-134) ──────────────────────────────────────────────
 
-  // PV
+  // PV — układ B: moc na górze, dwie metryki w kolumnach, prognoza i pasek na dole.
   drawCard(10, 10, 190, 125);
   drawSolarIcon(18, 17);
   epd.setTextSize(1); epd.setCursor(50, 24); epd.print("PV");
-  epd.setTextSize(3); epd.setCursor(18, 48); epd.print(String((int)state.pvTotal));
-  epd.setTextSize(2); epd.setCursor(18 + String((int)state.pvTotal).length()*18+2, 55); epd.print("W");
+  String pvPowerText = String((int)state.pvTotal);
+  epd.setTextSize(3); epd.setCursor(92, 21); epd.print(pvPowerText);
+  epd.setTextSize(2); epd.setCursor(92 + pvPowerText.length()*18 + 2, 28); epd.print("W");
   int pvPct = (int)(state.pvTotal / deviceSettings.pvMaxW * 100.0f);
   pvPct = min(pvPct, 100);
-  // Dwie krótkie linie mieszczą dzisiejszą produkcję i prognozę na jutro.
-  epd.setTextSize(1); epd.setCursor(18, 82);
-  if (state.solarKwh > 0 && state.independence > 0) {
-    char pLine[28];
-    snprintf(pLine, sizeof(pLine), "%.1fkWh  eff:%.0f%%",
-      state.solarKwh, state.independence);
-    epd.print(pLine);
-  } else if (state.solarKwh > 0) {
-    char pLine[20];
-    snprintf(pLine, sizeof(pLine), "dzis: %.1f kWh", state.solarKwh);
-    epd.print(pLine);
-  } else if (state.pvTotal > 50) {
-    epd.print("produkcja " + String(pvPct) + "%");
+
+  epd.drawLine(18, 57, 192, 57, TFT_BLACK);
+  epd.setTextSize(1); epd.setCursor(18, 66); epd.print("DZIS");
+  epd.setTextSize(1); epd.setCursor(110, 66); epd.print("NIEZALEZNOSC");
+  epd.drawLine(101, 65, 101, 96, TFT_BLACK);
+
+  epd.setTextSize(2); epd.setCursor(18, 79);
+  if (state.solarKwh > 0) {
+    epd.print(String(state.solarKwh, 1));
+    epd.setTextSize(1); epd.setCursor(18 + String(state.solarKwh, 1).length()*12 + 3, 86); epd.print("kWh");
   } else {
-    epd.print("brak slonca");
+    epd.setTextSize(1); epd.setCursor(18, 84); epd.print("brak danych");
   }
-  epd.setCursor(18, 94);
+  epd.setTextSize(2); epd.setCursor(110, 79);
+  if (state.independence >= 0) {
+    epd.print(String((int)state.independence));
+    epd.setTextSize(1); epd.setCursor(110 + String((int)state.independence).length()*12 + 2, 86); epd.print("%");
+  } else {
+    epd.setTextSize(1); epd.setCursor(110, 84); epd.print("--");
+  }
+
+  epd.setTextSize(1); epd.setCursor(18, 101);
   if (state.forecastTomorrowKwh > 0) {
     char tomorrowLine[28];
     snprintf(tomorrowLine, sizeof(tomorrowLine), "Jutro PV: %.1f kWh", state.forecastTomorrowKwh);
@@ -1126,9 +1137,8 @@ void drawScreen() {
   } else {
     epd.print("Jutro PV: brak prognozy");
   }
-  // Pasek efektywnosci (lub mocy szczytowej jako fallback)
   float barVal = state.independence > 0 ? state.independence : (float)pvPct;
-  drawBar(18, 112, 168, 8, barVal);
+  drawBar(18, 116, 168, 8, barVal);
 
   // Bateria
   drawCard(208, 10, 190, 125);
