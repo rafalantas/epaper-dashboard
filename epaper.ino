@@ -167,6 +167,7 @@ struct DeviceSettings {
 };
 DeviceSettings deviceSettings;
 String latestGithubVersion;
+String lastOtaResult;
 
 EPaper epd;
 
@@ -1512,8 +1513,8 @@ void drawScreen() {
   epd.setCursor(447, 429);
   epd.print("STATUS");
   epd.setCursor(447, 447);
-  epd.print("Wybudzenie #");
-  epd.print(rtc_bootCount);
+  epd.print("OTA: ");
+  epd.print(lastOtaResult.isEmpty() ? "--" : lastOtaResult);
   drawWifiIcon(447, 458, state.connected);
   epd.setCursor(466, 464);
   epd.print("EcoFlow: ");
@@ -1623,15 +1624,15 @@ void setup() {
     Preferences prefs;
     if (prefs.begin("epaper", true)) {
       latestGithubVersion = prefs.getString("ghVersion", "");
+      lastOtaResult = prefs.getString("otaLastResult", "--");
       const String pendingOtaVersion = prefs.getString("otaPendingVersion", "");
       if (!pendingOtaVersion.isEmpty()) {
         if (pendingOtaVersion == String(FIRMWARE_VERSION)) {
-          Serial.printf("OTA VERIFY: OK — urzadzenie uruchomilo %s\n", FIRMWARE_VERSION);
-          prefs.putString("otaLastResult", "OK " + pendingOtaVersion);
+          lastOtaResult = "OK " + pendingOtaVersion;
+          prefs.putString("otaLastResult", lastOtaResult);
         } else {
-          Serial.printf("OTA VERIFY: BLAD — oczekiwano %s, uruchomiono %s\n",
-            pendingOtaVersion.c_str(), FIRMWARE_VERSION);
-          prefs.putString("otaLastResult", "FAIL " + pendingOtaVersion + " -> " + FIRMWARE_VERSION);
+          lastOtaResult = "BLAD " + pendingOtaVersion;
+          prefs.putString("otaLastResult", lastOtaResult);
         }
         prefs.remove("otaPendingVersion");
       }
