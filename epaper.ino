@@ -85,7 +85,7 @@ struct State {
   float solarKwh    = 0;
   float forecastKwh = 0;
   float forecastTomorrowKwh = -1;
-  float independence= 0;
+  float productionEfficiency = -1;
   int   chgRemTime  = 0;
   int   dsgRemTime  = 0;
   bool  connected   = false;
@@ -234,7 +234,7 @@ void goToSleep(uint64_t seconds) {
   esp_deep_sleep(seconds * 1000000ULL);
 }
 RTC_DATA_ATTR int   rtc_bootCount        = 0;
-RTC_DATA_ATTR float rtc_independence      = 0;
+RTC_DATA_ATTR float rtc_productionEfficiency = -1;
 RTC_DATA_ATTR float rtc_forecastKwh       = 0;
 RTC_DATA_ATTR float rtc_solarKwh          = 0;
 RTC_DATA_ATTR float rtc_forecastTomorrowKwh = -1;
@@ -242,6 +242,8 @@ RTC_DATA_ATTR int   rtc_effFetchHour      = -1;
 RTC_DATA_ATTR bool  rtc_nightUpdateChecked = false;
 RTC_DATA_ATTR uint8_t rtc_otaFailureCount = 0;
 RTC_DATA_ATTR time_t rtc_otaRetryAfter = 0;
+RTC_DATA_ATTR int rtc_githubVersionFetchDay = -1;
+RTC_DATA_ATTR time_t rtc_githubVersionLastAttempt = 0;
 RTC_DATA_ATTR time_t rtc_ntpLastStart = 0;
 RTC_DATA_ATTR bool  rtc_dashboardDrawn    = false;  // na ekranie jest dashboard (nie komunikat)
 
@@ -757,7 +759,7 @@ bool fetchEfficiency() {
       DynamicJsonDocument doc(256);
       if (deserializeJson(doc, body, DeserializationOption::Filter(filter)) == DeserializationError::Ok) {
         state.solarKwh    = doc["totalKwh"]   | 0.0f;
-        state.independence= doc["efficiency"] | 0.0f;  // 83.8%
+        state.productionEfficiency = doc["efficiency"] | -1.0f;  // EcoFlow: efektywność produkcji
         ok = true;
       }
     }
@@ -1106,12 +1108,10 @@ void drawScreen() {
   String pvPowerText = String((int)state.pvTotal);
   epd.setTextSize(3); epd.setCursor(92, 21); epd.print(pvPowerText);
   epd.setTextSize(2); epd.setCursor(92 + pvPowerText.length()*18 + 2, 28); epd.print("W");
-  int pvPct = (int)(state.pvTotal / deviceSettings.pvMaxW * 100.0f);
-  pvPct = min(pvPct, 100);
 
   epd.drawLine(18, 57, 192, 57, TFT_BLACK);
   epd.setTextSize(1); epd.setCursor(18, 66); epd.print("DZIS");
-  epd.setTextSize(1); epd.setCursor(110, 66); epd.print("NIEZALEZNOSC");
+  epd.setTextSize(1); epd.setCursor(110, 66); epd.print("EFEKT. PROD.");
   epd.drawLine(101, 65, 101, 96, TFT_BLACK);
 
   epd.setTextSize(2); epd.setCursor(18, 79);
@@ -1122,9 +1122,10 @@ void drawScreen() {
     epd.setTextSize(1); epd.setCursor(18, 84); epd.print("brak danych");
   }
   epd.setTextSize(2); epd.setCursor(110, 79);
-  if (state.independence >= 0) {
-    epd.print(String((int)state.independence));
-    epd.setTextSize(1); epd.setCursor(110 + String((int)state.independence).length()*12 + 2, 86); epd.print("%");
+  if (state.productionEfficiency >= 0) {
+    String efficiencyText = String(state.productionEfficiency, 1);
+    epd.print(efficiencyText);
+    epd.setTextSize(1); epd.setCursor(110 + efficiencyText.length()*12 + 2, 86); epd.print("%");
   } else {
     epd.setTextSize(1); epd.setCursor(110, 84); epd.print("--");
   }
@@ -1137,8 +1138,7 @@ void drawScreen() {
   } else {
     epd.print("Jutro PV: brak prognozy");
   }
-  float barVal = state.independence > 0 ? state.independence : (float)pvPct;
-  drawBar(18, 116, 168, 8, barVal);
+  drawBar(18, 116, 168, 8, state.productionEfficiency >= 0 ? state.productionEfficiency : 0.0f);
 
   // Bateria
   drawCard(208, 10, 190, 125);
@@ -1628,7 +1628,7 @@ void setup() {
   }
 
   // Zaladuj efficiency z RTC cache
-  state.independence = rtc_independence;
+  state.productionEfficiency = rtc_productionEfficiency;
   state.forecastKwh  = rtc_forecastKwh;
   state.solarKwh     = rtc_solarKwh;
   state.forecastTomorrowKwh = rtc_forecastTomorrowKwh;
@@ -1690,7 +1690,7 @@ void setup() {
   const int efficiencyFetchSlot = nowTm.tm_yday * 24 + currentHour;
   if (!isNightHours(currentHour) && rtc_effFetchHour != efficiencyFetchSlot) {
     if (fetchEfficiency()) {
-      rtc_independence = state.independence;
+      rtc_productionEfficiency = state.productionEfficiency;
       rtc_forecastKwh = state.forecastKwh;
       rtc_solarKwh = state.solarKwh;
       rtc_forecastTomorrowKwh = state.forecastTomorrowKwh;
@@ -1699,6 +1699,24 @@ void setup() {
   }
 
   const bool nightMode = isNightHours(nowTm.tm_hour);
+
+  // Refresh the footer's GitHub release version once per local day.
+  // Keep OTA installation on its existing night-only schedule.
+  const int githubVersionFetchSlot = nowTm.tm_year * 366 + nowTm.tm_yday;
+  if (!nightMode && rtc_githubVersionFetchDay != githubVersionFetchSlot &&
+      (rtc_githubVersionLastAttempt == 0 || now - rtc_githubVersionLastAttempt >= 3600)) {
+    rtc_githubVersionLastAttempt = now;
+    String discoveredVersion;
+    if (fetchLatestFirmwareVersion(&discoveredVersion)) {
+      latestGithubVersion = discoveredVersion;
+      rtc_githubVersionFetchDay = githubVersionFetchSlot;
+      Preferences prefs;
+      if (prefs.begin("epaper", false)) {
+        prefs.putString("ghVersion", latestGithubVersion);
+        prefs.end();
+      }
+    }
+  }
   unsigned long sleepSec = calcSleepSeconds(nowTm.tm_hour, nowTm.tm_min);
   if (batterySaving && !nightMode) sleepSec = max((unsigned long)normalSleep, sleepSec);
 

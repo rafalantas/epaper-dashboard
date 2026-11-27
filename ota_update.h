@@ -32,6 +32,50 @@ static bool parseFirmwareVersion(const String& value, uint32_t parts[3]) {
   return true;
 }
 
+
+static bool fetchLatestFirmwareVersion(String* latestVersionOut = nullptr) {
+  WiFiClientSecure secureClient;
+  secureClient.setCACert(GITHUB_OTA_ROOTS);
+
+  HTTPClient http;
+  if (!http.begin(secureClient, RELEASE_API_URL)) {
+    Serial.println("GH version: nie mozna otworzyc API GitHub");
+    return false;
+  }
+  http.setTimeout(15000);
+  http.setUserAgent("epaper-dashboard-version");
+  http.addHeader("Accept", "application/vnd.github+json");
+  http.addHeader("X-GitHub-Api-Version", "2022-11-28");
+
+  StaticJsonDocument<64> filter;
+  filter["tag_name"] = true;
+  StaticJsonDocument<256> release;
+  const int status = http.GET();
+  if (status != HTTP_CODE_OK) {
+    Serial.printf("GH version: GitHub API HTTP %d\n", status);
+    http.end();
+    return false;
+  }
+
+  const DeserializationError jsonError =
+    deserializeJson(release, http.getStream(), DeserializationOption::Filter(filter));
+  http.end();
+  if (jsonError != DeserializationError::Ok) {
+    Serial.printf("GH version: blad JSON GitHub: %s\n", jsonError.c_str());
+    return false;
+  }
+
+  const String latestVersion = release["tag_name"] | "";
+  uint32_t parsed[3];
+  if (!parseFirmwareVersion(latestVersion, parsed)) {
+    Serial.printf("GH version: nieprawidlowy tag '%s'\n", latestVersion.c_str());
+    return false;
+  }
+
+  if (latestVersionOut != nullptr) *latestVersionOut = latestVersion;
+  return true;
+}
+
 static bool isNewerFirmware(const String& latest, const String& current) {
   uint32_t latestParts[3], currentParts[3];
   if (!parseFirmwareVersion(latest, latestParts) ||
