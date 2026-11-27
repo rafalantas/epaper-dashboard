@@ -1764,7 +1764,7 @@ void setup() {
       // retries; no wakeups are scheduled solely for OTA.
       const uint32_t backoffHours = min(6UL << (rtc_otaFailureCount - 1), 48UL);
       rtc_otaRetryAfter = now + (time_t)backoffHours * 3600;
-      Serial.printf("OTA: retry za %lu h (failure=%u)\\n",
+      Serial.printf("OTA: retry za %lu h (failure=%u)\n",
         (unsigned long)backoffHours, (unsigned)rtc_otaFailureCount);
     }
     if (!checkedVersion.isEmpty()) {
