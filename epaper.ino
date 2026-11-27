@@ -1626,10 +1626,10 @@ void setup() {
       const String pendingOtaVersion = prefs.getString("otaPendingVersion", "");
       if (!pendingOtaVersion.isEmpty()) {
         if (pendingOtaVersion == String(FIRMWARE_VERSION)) {
-          Serial.printf("OTA VERIFY: OK — urzadzenie uruchomilo %s\\n", FIRMWARE_VERSION);
+          Serial.printf("OTA VERIFY: OK — urzadzenie uruchomilo %s\n", FIRMWARE_VERSION);
           prefs.putString("otaLastResult", "OK " + pendingOtaVersion);
         } else {
-          Serial.printf("OTA VERIFY: BLAD — oczekiwano %s, uruchomiono %s\\n",
+          Serial.printf("OTA VERIFY: BLAD — oczekiwano %s, uruchomiono %s\n",
             pendingOtaVersion.c_str(), FIRMWARE_VERSION);
           prefs.putString("otaLastResult", "FAIL " + pendingOtaVersion + " -> " + FIRMWARE_VERSION);
         }
@@ -1819,7 +1819,7 @@ void setup() {
       prefs.putString("otaPendingVersion", latestGithubVersion);
       prefs.end();
     }
-    Serial.printf("OTA: instalacja %s zakonczona, restartuje urzadzenie\\n",
+    Serial.printf("OTA: instalacja %s zakonczona, restartuje urzadzenie\n",
       latestGithubVersion.c_str());
     ESP.restart();
   }
