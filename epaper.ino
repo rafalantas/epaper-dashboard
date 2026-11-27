@@ -1623,6 +1623,18 @@ void setup() {
     Preferences prefs;
     if (prefs.begin("epaper", true)) {
       latestGithubVersion = prefs.getString("ghVersion", "");
+      const String pendingOtaVersion = prefs.getString("otaPendingVersion", "");
+      if (!pendingOtaVersion.isEmpty()) {
+        if (pendingOtaVersion == String(FIRMWARE_VERSION)) {
+          Serial.printf("OTA VERIFY: OK — urzadzenie uruchomilo %s\\n", FIRMWARE_VERSION);
+          prefs.putString("otaLastResult", "OK " + pendingOtaVersion);
+        } else {
+          Serial.printf("OTA VERIFY: BLAD — oczekiwano %s, uruchomiono %s\\n",
+            pendingOtaVersion.c_str(), FIRMWARE_VERSION);
+          prefs.putString("otaLastResult", "FAIL " + pendingOtaVersion + " -> " + FIRMWARE_VERSION);
+        }
+        prefs.remove("otaPendingVersion");
+      }
       prefs.end();
     }
   }
@@ -1800,7 +1812,15 @@ void setup() {
   delay(100);
 
   if (otaUpdated) {
-    Serial.println("OTA: wersja zapisana, restartuje urzadzenie");
+    // Persist the expected release before reboot so the next boot can verify
+    // that the newly installed image actually started.
+    Preferences prefs;
+    if (prefs.begin("epaper", false)) {
+      prefs.putString("otaPendingVersion", latestGithubVersion);
+      prefs.end();
+    }
+    Serial.printf("OTA: instalacja %s zakonczona, restartuje urzadzenie\\n",
+      latestGithubVersion.c_str());
     ESP.restart();
   }
 
