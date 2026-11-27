@@ -167,6 +167,7 @@ struct DeviceSettings {
 };
 DeviceSettings deviceSettings;
 String latestGithubVersion;
+String lastOtaResult;
 
 EPaper epd;
 
@@ -1512,8 +1513,8 @@ void drawScreen() {
   epd.setCursor(447, 429);
   epd.print("STATUS");
   epd.setCursor(447, 447);
-  epd.print("Wybudzenie #");
-  epd.print(rtc_bootCount);
+  epd.print("OTA: ");
+  epd.print(lastOtaResult.isEmpty() ? "--" : lastOtaResult);
   drawWifiIcon(447, 458, state.connected);
   epd.setCursor(466, 464);
   epd.print("EcoFlow: ");
@@ -1623,6 +1624,18 @@ void setup() {
     Preferences prefs;
     if (prefs.begin("epaper", true)) {
       latestGithubVersion = prefs.getString("ghVersion", "");
+      lastOtaResult = prefs.getString("otaLastResult", "--");
+      const String pendingOtaVersion = prefs.getString("otaPendingVersion", "");
+      if (!pendingOtaVersion.isEmpty()) {
+        if (pendingOtaVersion == String(FIRMWARE_VERSION)) {
+          lastOtaResult = "OK " + pendingOtaVersion;
+          prefs.putString("otaLastResult", lastOtaResult);
+        } else {
+          lastOtaResult = "BLAD " + pendingOtaVersion;
+          prefs.putString("otaLastResult", lastOtaResult);
+        }
+        prefs.remove("otaPendingVersion");
+      }
       prefs.end();
     }
   }
@@ -1800,7 +1813,15 @@ void setup() {
   delay(100);
 
   if (otaUpdated) {
-    Serial.println("OTA: wersja zapisana, restartuje urzadzenie");
+    // Persist the expected release before reboot so the next boot can verify
+    // that the newly installed image actually started.
+    Preferences prefs;
+    if (prefs.begin("epaper", false)) {
+      prefs.putString("otaPendingVersion", latestGithubVersion);
+      prefs.end();
+    }
+    Serial.printf("OTA: instalacja %s zakonczona, restartuje urzadzenie\n",
+      latestGithubVersion.c_str());
     ESP.restart();
   }
 
