@@ -1740,15 +1740,21 @@ void setup() {
              (rtc_otaRetryAfter == 0 || now >= rtc_otaRetryAfter)) {
     rtc_nightUpdateChecked = true;
     String checkedVersion;
-    otaUpdated = checkAndInstallFirmwareUpdate(&checkedVersion);
-    if (otaUpdated || !checkedVersion.isEmpty()) {
+    const OtaResult otaResult = checkAndInstallFirmwareUpdate(&checkedVersion);
+    otaUpdated = otaResult == OtaResult::UPDATED;
+
+    // A successful metadata lookup is NOT a successful OTA. Reset the retry
+    // state only when no update is needed or the new firmware was installed.
+    if (otaResult == OtaResult::NO_UPDATE || otaResult == OtaResult::UPDATED) {
       rtc_otaFailureCount = 0;
       rtc_otaRetryAfter = 0;
     } else {
       if (rtc_otaFailureCount < 4) rtc_otaFailureCount++;
-      const uint32_t backoffHours = min(48UL << (rtc_otaFailureCount - 1), 384UL);
+      // 6, 12, 24, then 48 hours. No extra wakeups: retry on a normal
+      // scheduled wake during the night window once this deadline has passed.
+      const uint32_t backoffHours = min(6UL << (rtc_otaFailureCount - 1), 48UL);
       rtc_otaRetryAfter = now + (time_t)backoffHours * 3600;
-      Serial.printf("OTA: retry za %lu h (failure=%u)\n",
+      Serial.printf("OTA: retry za %lu h (failure=%u)\\n",
         (unsigned long)backoffHours, (unsigned)rtc_otaFailureCount);
     }
     if (!checkedVersion.isEmpty()) {
