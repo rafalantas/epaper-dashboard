@@ -1732,13 +1732,23 @@ void setup() {
   }
 
   bool otaUpdated = false;
-  // Check once as the device enters its long night sleep. The e-paper is not
-  // refreshed by OTA; it keeps its existing night image while firmware downloads.
+  // Reset the daily check flag during daytime. A retry deadline is independent
+  // of night mode and is handled on the first ordinary wake after it expires.
   if (!nightMode) {
     rtc_nightUpdateChecked = false;
-  } else if (!rtc_nightUpdateChecked &&
-             (rtc_otaRetryAfter == 0 || now >= rtc_otaRetryAfter)) {
-    rtc_nightUpdateChecked = true;
+  }
+
+  const bool otaRetryPending = rtc_otaRetryAfter > 0;
+  const bool otaRetryDue = otaRetryPending && now >= rtc_otaRetryAfter;
+  const bool firstNightCheckDue =
+    !otaRetryPending && nightMode && !rtc_nightUpdateChecked;
+
+  // Reuse this wake's existing Wi-Fi session. No timer, extra wakeup or
+  // additional connection is introduced; a retry runs only once its deadline
+  // has passed. Normal nightly checks remain limited to once per night.
+  if (otaRetryDue || firstNightCheckDue) {
+    if (nightMode) rtc_nightUpdateChecked = true;
+
     String checkedVersion;
     const OtaResult otaResult = checkAndInstallFirmwareUpdate(&checkedVersion);
     otaUpdated = otaResult == OtaResult::UPDATED;
@@ -1750,8 +1760,8 @@ void setup() {
       rtc_otaRetryAfter = 0;
     } else {
       if (rtc_otaFailureCount < 4) rtc_otaFailureCount++;
-      // 6, 12, 24, then 48 hours. No extra wakeups: retry on a normal
-      // scheduled wake during the night window once this deadline has passed.
+      // 6, 12, 24, then 48 hours. The first normal wake after the deadline
+      // retries; no wakeups are scheduled solely for OTA.
       const uint32_t backoffHours = min(6UL << (rtc_otaFailureCount - 1), 48UL);
       rtc_otaRetryAfter = now + (time_t)backoffHours * 3600;
       Serial.printf("OTA: retry za %lu h (failure=%u)\\n",
