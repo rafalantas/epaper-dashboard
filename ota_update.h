@@ -52,7 +52,7 @@ static bool fetchLatestFirmwareVersion(String* latestVersionOut = nullptr) {
   StaticJsonDocument<256> release;
   const int status = http.GET();
   if (status != HTTP_CODE_OK) {
-    Serial.printf("GH version: GitHub API HTTP %d\\n", status);
+    Serial.printf("GH version: GitHub API HTTP %d\n", status);
     http.end();
     return false;
   }
@@ -61,14 +61,14 @@ static bool fetchLatestFirmwareVersion(String* latestVersionOut = nullptr) {
     deserializeJson(release, http.getStream(), DeserializationOption::Filter(filter));
   http.end();
   if (jsonError != DeserializationError::Ok) {
-    Serial.printf("GH version: blad JSON GitHub: %s\\n", jsonError.c_str());
+    Serial.printf("GH version: blad JSON GitHub: %s\n", jsonError.c_str());
     return false;
   }
 
   const String latestVersion = release["tag_name"] | "";
   uint32_t parsed[3];
   if (!parseFirmwareVersion(latestVersion, parsed)) {
-    Serial.printf("GH version: nieprawidlowy tag '%s'\\n", latestVersion.c_str());
+    Serial.printf("GH version: nieprawidlowy tag '%s'\n", latestVersion.c_str());
     return false;
   }
 
