@@ -12,6 +12,12 @@ static const char* const RELEASE_API_URL =
   "https://api.github.com/repos/rafalantas/epaper-dashboard/releases/latest";
 static const char* const RELEASE_ASSET_NAME = "epaper-dashboard-xiao-esp32c3.bin";
 
+enum class OtaResult : uint8_t {
+  NO_UPDATE,
+  UPDATED,
+  FAILED
+};
+
 static bool parseFirmwareVersion(const String& value, uint32_t parts[3]) {
   String version = value;
   if (version.startsWith("v")) version.remove(0, 1);
@@ -36,14 +42,14 @@ static bool isNewerFirmware(const String& latest, const String& current) {
   return false;
 }
 
-static bool checkAndInstallFirmwareUpdate(String* checkedVersion = nullptr) {
+static OtaResult checkAndInstallFirmwareUpdate(String* checkedVersion = nullptr) {
   WiFiClientSecure secureClient;
   secureClient.setCACert(GITHUB_OTA_ROOTS);
 
   HTTPClient http;
   if (!http.begin(secureClient, RELEASE_API_URL)) {
     Serial.println("OTA: nie mozna otworzyc API GitHub");
-    return false;
+    return OtaResult::FAILED;
   }
   http.setTimeout(15000);
   http.setUserAgent("epaper-dashboard-ota");
@@ -56,18 +62,31 @@ static bool checkAndInstallFirmwareUpdate(String* checkedVersion = nullptr) {
   filter["assets"][0]["browser_download_url"] = true;
   StaticJsonDocument<1536> release;
   const int status = http.GET();
-  if (status != HTTP_CODE_OK ||
-      deserializeJson(release, http.getStream(), DeserializationOption::Filter(filter)) != DeserializationError::Ok) {
+  if (status != HTTP_CODE_OK) {
     Serial.printf("OTA: GitHub API HTTP %d\n", status);
     http.end();
-    return false;
+    return OtaResult::FAILED;
   }
+
+  const DeserializationError jsonError =
+    deserializeJson(release, http.getStream(), DeserializationOption::Filter(filter));
   http.end();
+  if (jsonError != DeserializationError::Ok) {
+    Serial.printf("OTA: blad JSON GitHub: %s\n", jsonError.c_str());
+    return OtaResult::FAILED;
+  }
 
   const String latestVersion = release["tag_name"] | "";
+  uint32_t latestParts[3];
+  if (!parseFirmwareVersion(latestVersion, latestParts)) {
+    Serial.printf("OTA: nieprawidlowy tag wydania: '%s'\n", latestVersion.c_str());
+    return OtaResult::FAILED;
+  }
   if (checkedVersion != nullptr) *checkedVersion = latestVersion;
+
   if (!isNewerFirmware(latestVersion, FIRMWARE_VERSION)) {
-    return false;
+    Serial.printf("OTA: firmware aktualny (%s)\n", FIRMWARE_VERSION);
+    return OtaResult::NO_UPDATE;
   }
 
   String firmwareUrl;
@@ -77,9 +96,10 @@ static bool checkAndInstallFirmwareUpdate(String* checkedVersion = nullptr) {
       break;
     }
   }
-  if (firmwareUrl.isEmpty() || !firmwareUrl.startsWith("https://github.com/rafalantas/epaper-dashboard/releases/")) {
+  if (firmwareUrl.isEmpty() ||
+      !firmwareUrl.startsWith("https://github.com/rafalantas/epaper-dashboard/releases/")) {
     Serial.println("OTA: brak prawidlowej binarki w najnowszym wydaniu");
-    return false;
+    return OtaResult::FAILED;
   }
 
   Serial.printf("OTA: aktualizacja %s -> %s\n", FIRMWARE_VERSION, latestVersion.c_str());
@@ -90,7 +110,13 @@ static bool checkAndInstallFirmwareUpdate(String* checkedVersion = nullptr) {
   const auto result = updater.update(secureClient, firmwareUrl, FIRMWARE_VERSION);
   if (result == HTTP_UPDATE_FAILED) {
     Serial.printf("OTA: niepowodzenie: %s\n", updater.getLastErrorString().c_str());
+    return OtaResult::FAILED;
   }
-  // On success HTTPUpdate restarts the ESP32. No e-paper update is performed.
-  return result == HTTP_UPDATE_OK;
+  if (result != HTTP_UPDATE_OK) {
+    Serial.printf("OTA: nieoczekiwany wynik instalacji: %d\n", (int)result);
+    return OtaResult::FAILED;
+  }
+
+  // On success HTTPUpdate may restart the ESP32. No e-paper update is performed.
+  return OtaResult::UPDATED;
 }
